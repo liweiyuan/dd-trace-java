@@ -10,7 +10,6 @@ import net.bytebuddy.utility.JavaModule
 import net.sf.cglib.proxy.Enhancer
 import net.sf.cglib.proxy.MethodInterceptor
 import net.sf.cglib.proxy.MethodProxy
-import spock.lang.Requires
 
 import java.lang.instrument.ClassDefinition
 import java.lang.ref.WeakReference
@@ -19,20 +18,14 @@ import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.util.concurrent.atomic.AtomicReference
 
-import static context.ContextTestInstrumentation.DisabledKeyClass
-import static context.ContextTestInstrumentation.IncorrectCallUsageKeyClass
-import static context.ContextTestInstrumentation.IncorrectContextClassUsageKeyClass
-import static context.ContextTestInstrumentation.IncorrectKeyClassUsageKeyClass
-import static context.ContextTestInstrumentation.InvalidInheritsSerializableKeyClass
-import static context.ContextTestInstrumentation.InvalidSerializableKeyClass
-import static context.ContextTestInstrumentation.KeyClass
-import static context.ContextTestInstrumentation.UntransformableKeyClass
-import static context.ContextTestInstrumentation.ValidInheritsSerializableKeyClass
-import static context.ContextTestInstrumentation.ValidSerializableKeyClass
-import static datadog.trace.bootstrap.config.provider.SystemPropertiesConfigSource.PREFIX
+import static context.FieldInjectionTestInstrumentation.*
 import static org.junit.Assume.assumeTrue
 
-class FieldBackedProviderTest extends AgentTestRunner {
+class FieldInjectionLegacyForkedTest extends AgentTestRunner {
+  void configurePreAgent() {
+    injectSysConfig("dd.trace.legacy.context.field.injection", "true")
+  }
+
   @Override
   void onDiscovery(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded) {
     if (typeName?.endsWith("UntransformableKeyClass")) {
@@ -123,11 +116,11 @@ class FieldBackedProviderTest extends AgentTestRunner {
     serialVersionUID(serializable) == serialVersionUID
 
     where:
-    serializable                        | serialVersionUID // These are calculated with the corresponding declarations in ContextTestInstrumentation removed
+    serializable                        | serialVersionUID // These are calculated with the corresponding declarations in FieldInjectionTestInstrumentation removed
     ValidSerializableKeyClass           | 123
-    InvalidSerializableKeyClass         | -7962971793425055368L
+    InvalidSerializableKeyClass         | -5663127853206342441L
     ValidInheritsSerializableKeyClass   | 456
-    InvalidInheritsSerializableKeyClass | 3138394217499921470L
+    InvalidInheritsSerializableKeyClass | -4774694079403599336L
   }
 
   static final long serialVersionUID(Class<? extends Serializable> klass) throws Exception {
@@ -219,13 +212,14 @@ class FieldBackedProviderTest extends AgentTestRunner {
 }
 
 /**
- * Make sure that fields not get injected into the class if it is disabled via system properties.
- *
- * Unfortunately we cannot set system properties here early enough for AgentTestRunner to see.
- * Instead we have to configure this via Gradle. Ideally we should not have to do this.
+ * Make sure that fields don't get injected into the class if it is disabled via system properties.
  */
-@Requires({ "true" == System.getProperty(PREFIX + Config.RUNTIME_CONTEXT_FIELD_INJECTION) })
-class FieldBackedProviderFieldInjectionDisabledTest extends AgentTestRunner {
+class FieldInjectionDisabledLegacyForkedTest extends AgentTestRunner {
+  void configurePreAgent() {
+    injectSysConfig("dd.trace.legacy.context.field.injection", "true")
+    injectSysConfig("dd.trace.runtime.context.field.injection", "false")
+  }
+
   def "Check that structure is not modified when structure modification is disabled"() {
     setup:
     def keyClass = DisabledKeyClass
@@ -249,7 +243,6 @@ class FieldBackedProviderFieldInjectionDisabledTest extends AgentTestRunner {
     }
 
     expect:
-    Config.get().isPrioritySamplingEnabled() == false
     hasField == false
     hasMarkerInterface == false
     hasAccessorInterface == false
