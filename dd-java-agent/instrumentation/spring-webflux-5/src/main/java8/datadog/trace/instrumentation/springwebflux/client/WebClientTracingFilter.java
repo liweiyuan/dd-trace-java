@@ -21,12 +21,18 @@ import reactor.core.publisher.Mono;
  * https://github.com/spring-cloud/spring-cloud-sleuth/blob/master/spring-cloud-sleuth-core/src/main/java/org/springframework/cloud/sleuth/instrument/web/client/TraceWebClientBeanPostProcessor.java
  */
 public class WebClientTracingFilter implements ExchangeFilterFunction {
+  private static final WebClientTracingFilter INSTANCE = new WebClientTracingFilter();
+
   public static void addFilter(final List<ExchangeFilterFunction> exchangeFilterFunctions) {
     // Since the builder where we instrument the build function can be reused, we need
     // to only add the filter once
-    exchangeFilterFunctions.removeIf(
-        filterFunction -> filterFunction instanceof WebClientTracingFilter);
-    exchangeFilterFunctions.add(0, new WebClientTracingFilter());
+    int index = exchangeFilterFunctions.indexOf(INSTANCE);
+    if (index > 0) {
+      exchangeFilterFunctions.remove(INSTANCE);
+    }
+    if (index != 0) {
+      exchangeFilterFunctions.add(0, INSTANCE);
+    }
   }
 
   @Override

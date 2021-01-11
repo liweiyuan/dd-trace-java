@@ -3,12 +3,13 @@ package datadog.trace.instrumentation.springwebflux.client;
 import static datadog.trace.agent.tooling.ClassLoaderMatcher.hasClassesNamed;
 import static datadog.trace.agent.tooling.bytebuddy.matcher.DDElementMatchers.implementsInterface;
 import static datadog.trace.agent.tooling.bytebuddy.matcher.NameMatchers.named;
-import static java.util.Collections.singletonMap;
+import static net.bytebuddy.matcher.ElementMatchers.isConstructor;
 import static net.bytebuddy.matcher.ElementMatchers.isMethod;
 import static net.bytebuddy.matcher.ElementMatchers.isPublic;
 
 import com.google.auto.service.AutoService;
 import datadog.trace.agent.tooling.Instrumenter;
+import java.util.HashMap;
 import java.util.Map;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
@@ -45,7 +46,14 @@ public class WebClientFilterInstrumentation extends Instrumenter.Tracing {
 
   @Override
   public Map<? extends ElementMatcher<? super MethodDescription>, String> transformers() {
-    return singletonMap(
-        isMethod().and(isPublic()).and(named("build")), packageName + ".WebClientFilterAdvice");
+    final Map<ElementMatcher<? super MethodDescription>, String> transformers = new HashMap<>();
+
+    transformers.put(
+        isConstructor(), packageName + ".WebClientFilterAdvices$AfterConstructorAdvice");
+    transformers.put(
+        isMethod().and(isPublic()).and(named("filter").or(named("filters"))),
+        packageName + ".WebClientFilterAdvices$AfterFilterListModificationAdvice");
+
+    return transformers;
   }
 }
