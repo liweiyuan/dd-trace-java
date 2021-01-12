@@ -124,7 +124,7 @@ abstract class TomcatServlet3Test extends AbstractServlet3Test<Tomcat, Context> 
         if (endpoint != TIMEOUT && endpoint != TIMEOUT_ERROR) {
           "$Tags.HTTP_STATUS" { it == endpoint.status || !bubblesResponse }
         } else {
-          "timeout" 1_000
+          "timeout" 100
         }
         if (context) {
           "servlet.context" "/$context"
@@ -161,7 +161,7 @@ abstract class TomcatServlet3Test extends AbstractServlet3Test<Tomcat, Context> 
         if (endpoint != TIMEOUT && endpoint != TIMEOUT_ERROR) {
           "$Tags.HTTP_STATUS" endpoint.status
         } else {
-          "timeout" 1_000
+          "timeout" 100
         }
         if (context) {
           "servlet.context" "/$context"

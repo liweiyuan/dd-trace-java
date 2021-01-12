@@ -138,7 +138,7 @@ abstract class JettyServlet3Test extends AbstractServlet3Test<Server, ServletCon
         if (endpoint != TIMEOUT && endpoint != TIMEOUT_ERROR) {
           "$Tags.HTTP_STATUS" endpoint.status
         } else {
-          "timeout" 1_000
+          "timeout" 100
         }
         if (context) {
           "servlet.context" "/$context"
