@@ -8,6 +8,7 @@ import org.eclipse.jetty.server.Request
 import org.eclipse.jetty.server.Server
 import org.eclipse.jetty.server.handler.AbstractHandler
 import org.eclipse.jetty.server.handler.ErrorHandler
+import org.eclipse.jetty.util.thread.ExecutorThreadPool
 
 import javax.servlet.ServletException
 import javax.servlet.http.HttpServletRequest
@@ -38,6 +39,7 @@ class Jetty70Test extends HttpServerTest<Server> {
     def server = new Server(port)
     server.setHandler(handler())
     server.addBean(errorHandler)
+    server.setThreadPool(new ExecutorThreadPool(executorService))
     server.start()
     return server
   }

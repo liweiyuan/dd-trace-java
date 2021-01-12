@@ -16,6 +16,9 @@ import org.slf4j.LoggerFactory
 import spock.lang.Shared
 import spock.lang.Unroll
 
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.ERROR
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.EXCEPTION
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.NOT_FOUND
@@ -35,6 +38,9 @@ import static org.junit.Assume.assumeTrue
 
 @Unroll
 abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
+
+  @Shared
+  ExecutorService executorService = Executors.newFixedThreadPool(10)
 
   public static final Logger SERVER_LOGGER = LoggerFactory.getLogger("http-server")
   static {

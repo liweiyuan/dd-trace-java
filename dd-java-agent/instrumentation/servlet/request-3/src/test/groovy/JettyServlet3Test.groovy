@@ -6,6 +6,7 @@ import datadog.trace.instrumentation.servlet3.AsyncDispatcherDecorator
 import org.eclipse.jetty.server.Server
 import org.eclipse.jetty.server.handler.ErrorHandler
 import org.eclipse.jetty.servlet.ServletContextHandler
+import org.eclipse.jetty.util.thread.ExecutorThreadPool
 
 import javax.servlet.Servlet
 import javax.servlet.http.HttpServletRequest
@@ -51,6 +52,7 @@ abstract class JettyServlet3Test extends AbstractServlet3Test<Server, ServletCon
 //    setupAuthentication(jettyServer, servletContext)
     setupServlets(servletContext)
     jettyServer.setHandler(servletContext)
+    jettyServer.setThreadPool(new ExecutorThreadPool(executorService))
 
     jettyServer.start()
 
