@@ -69,12 +69,12 @@ dependencies {
     force = true
   }
 
-  latestDepTestCompile group: 'com.amazonaws', name: 'aws-java-sdk-s3', version: '+'
-  latestDepTestCompile group: 'com.amazonaws', name: 'aws-java-sdk-rds', version: '+'
-  latestDepTestCompile group: 'com.amazonaws', name: 'aws-java-sdk-ec2', version: '+'
-  latestDepTestCompile group: 'com.amazonaws', name: 'aws-java-sdk-kinesis', version: '+'
-  latestDepTestCompile group: 'com.amazonaws', name: 'aws-java-sdk-sqs', version: '+'
-  latestDepTestCompile group: 'com.amazonaws', name: 'aws-java-sdk-dynamodb', version: '+'
+  latestDepTestCompile group: 'com.amazonaws', name: 'aws-java-sdk-s3', version: '1.11.951'
+  latestDepTestCompile group: 'com.amazonaws', name: 'aws-java-sdk-rds', version: '1.11.950'
+  latestDepTestCompile group: 'com.amazonaws', name: 'aws-java-sdk-ec2', version: '1.11.951'
+  latestDepTestCompile group: 'com.amazonaws', name: 'aws-java-sdk-kinesis', version: '1.11.950'
+  latestDepTestCompile group: 'com.amazonaws', name: 'aws-java-sdk-sqs', version: '1.11.951'
+  latestDepTestCompile group: 'com.amazonaws', name: 'aws-java-sdk-dynamodb', version: '1.11.951'
 }
 
 test.dependsOn test_before_1_11_106
