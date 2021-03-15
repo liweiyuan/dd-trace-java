@@ -85,6 +85,9 @@ class B3HttpCodec {
 
     @Override
     public boolean accept(String key, String value) {
+      if (null == key || key.isEmpty()) {
+        return true;
+      }
       String lowerCaseKey = null;
       int classification = IGNORE;
       if (Character.toLowerCase(key.charAt(0)) == 'x') {
@@ -94,6 +97,8 @@ class B3HttpCodec {
           classification = SPAN_ID;
         } else if (SAMPLING_PRIORITY_KEY.equalsIgnoreCase(key)) {
           classification = SAMPLING_PRIORITY;
+        } else if (handledForwarding(key, value)) {
+          return true;
         }
       }
       if (!taggedHeaders.isEmpty() && classification == IGNORE) {

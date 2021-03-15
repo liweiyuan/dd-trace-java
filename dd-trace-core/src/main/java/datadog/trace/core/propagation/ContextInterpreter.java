@@ -1,5 +1,9 @@
 package datadog.trace.core.propagation;
 
+import static datadog.trace.core.propagation.HttpCodec.FORWARDED_FOR_KEY;
+import static datadog.trace.core.propagation.HttpCodec.FORWARDED_PORT_KEY;
+import static datadog.trace.core.propagation.HttpCodec.firstHeaderValue;
+
 import datadog.trace.api.DDId;
 import datadog.trace.api.Functions;
 import datadog.trace.api.cache.DDCache;
@@ -20,6 +24,8 @@ public abstract class ContextInterpreter implements AgentPropagation.KeyClassifi
   protected Map<String, String> tags;
   protected Map<String, String> baggage;
   protected String origin;
+  protected String forwardedFor;
+  protected String forwardedPort;
   protected boolean valid;
 
   private static final DDCache<String, String> CACHE = DDCaches.newFixedSizeCache(64);
@@ -51,11 +57,31 @@ public abstract class ContextInterpreter implements AgentPropagation.KeyClassifi
     }
   }
 
+  protected final boolean handledForwarding(String key, String value) {
+    if (FORWARDED_FOR_KEY.equalsIgnoreCase(key)) {
+      String firstValue = firstHeaderValue(value);
+      if (null != firstValue) {
+        forwardedFor = firstValue;
+      }
+      return true;
+    }
+    if (FORWARDED_PORT_KEY.equalsIgnoreCase(key)) {
+      String firstValue = firstHeaderValue(value);
+      if (null != firstValue) {
+        forwardedPort = firstValue;
+      }
+      return true;
+    }
+    return false;
+  }
+
   public ContextInterpreter reset() {
     traceId = DDId.ZERO;
     spanId = DDId.ZERO;
     samplingPriority = defaultSamplingPriority();
     origin = null;
+    forwardedFor = null;
+    forwardedPort = null;
     tags = Collections.emptyMap();
     baggage = Collections.emptyMap();
     valid = true;
@@ -66,11 +92,22 @@ public abstract class ContextInterpreter implements AgentPropagation.KeyClassifi
     if (valid) {
       if (!DDId.ZERO.equals(traceId)) {
         final ExtractedContext context =
-            new ExtractedContext(traceId, spanId, samplingPriority, origin, baggage, tags);
+            new ExtractedContext(
+                traceId,
+                spanId,
+                samplingPriority,
+                origin,
+                forwardedFor,
+                forwardedPort,
+                baggage,
+                tags);
         context.lockSamplingPriority();
         return context;
-      } else if (origin != null || !tags.isEmpty()) {
-        return new TagContext(origin, tags);
+      } else if (origin != null
+          || forwardedFor != null
+          || forwardedPort != null
+          || !tags.isEmpty()) {
+        return new TagContext(origin, forwardedFor, forwardedPort, tags);
       }
     }
     return null;

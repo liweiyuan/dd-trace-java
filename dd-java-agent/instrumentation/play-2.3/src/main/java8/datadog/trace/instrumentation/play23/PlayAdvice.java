@@ -4,6 +4,7 @@ import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.activateSp
 import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.activeSpan;
 import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.propagate;
 import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.startSpan;
+import static datadog.trace.bootstrap.instrumentation.decorator.HttpServerDecorator._500;
 import static datadog.trace.instrumentation.play23.PlayHeaders.GETTER;
 import static datadog.trace.instrumentation.play23.PlayHttpServerDecorator.DECORATE;
 import static datadog.trace.instrumentation.play23.PlayHttpServerDecorator.PLAY_REQUEST;
@@ -32,7 +33,6 @@ public class PlayAdvice {
     }
     span.setMeasured(true);
     DECORATE.afterStart(span);
-    DECORATE.onConnection(span, req);
 
     final AgentScope scope = activateSpan(span);
     scope.setAsyncPropagation(true);
@@ -49,7 +49,7 @@ public class PlayAdvice {
     final AgentSpan playControllerSpan = playControllerScope.span();
 
     // Call onRequest on return after tags are populated.
-    DECORATE.onRequest(playControllerSpan, req);
+    DECORATE.onRequest(playControllerSpan, req, req, null);
 
     if (throwable == null) {
       responseFuture.onComplete(
@@ -57,7 +57,7 @@ public class PlayAdvice {
           ((Action) thisAction).executionContext());
     } else {
       DECORATE.onError(playControllerSpan, throwable);
-      playControllerSpan.setTag(Tags.HTTP_STATUS, 500);
+      playControllerSpan.setTag(Tags.HTTP_STATUS, _500);
       DECORATE.beforeFinish(playControllerSpan);
       playControllerSpan.finish();
     }
@@ -67,7 +67,7 @@ public class PlayAdvice {
     final AgentSpan rootSpan = activeSpan();
     // set the resource name on the upstream akka/netty span if there is one
     if (rootSpan != null) {
-      DECORATE.onRequest(rootSpan, req);
+      DECORATE.onRequest(rootSpan, req, req, null);
     }
   }
 }

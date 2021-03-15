@@ -5,16 +5,20 @@ import datadog.trace.core.monitor.HealthMetrics;
 import datadog.trace.core.monitor.Monitoring;
 import datadog.trace.core.monitor.Recording;
 import datadog.trace.core.serialization.ByteBufferConsumer;
+import datadog.trace.core.serialization.FlushingBuffer;
 import datadog.trace.core.serialization.WritableFormatter;
 import datadog.trace.core.serialization.msgpack.MsgPackWriter;
 import java.nio.ByteBuffer;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
+import org.jctools.counters.CountersFactory;
+import org.jctools.counters.FixedSizeStripedLongCounter;
 
 @Slf4j
 public class PayloadDispatcher implements ByteBufferConsumer {
 
   private final DDAgentApi api;
+  private final DDAgentFeaturesDiscovery featuresDiscovery;
   private final HealthMetrics healthMetrics;
   private final Monitoring monitoring;
 
@@ -22,7 +26,17 @@ public class PayloadDispatcher implements ByteBufferConsumer {
   private TraceMapper traceMapper;
   private WritableFormatter packer;
 
-  public PayloadDispatcher(DDAgentApi api, HealthMetrics healthMetrics, Monitoring monitoring) {
+  private final FixedSizeStripedLongCounter droppedSpanCount =
+      CountersFactory.createFixedSizeStripedCounter(8);
+  private final FixedSizeStripedLongCounter droppedTraceCount =
+      CountersFactory.createFixedSizeStripedCounter(8);
+
+  public PayloadDispatcher(
+      DDAgentFeaturesDiscovery featuresDiscovery,
+      DDAgentApi api,
+      HealthMetrics healthMetrics,
+      Monitoring monitoring) {
+    this.featuresDiscovery = featuresDiscovery;
     this.api = api;
     this.healthMetrics = healthMetrics;
     this.monitoring = monitoring;
@@ -34,30 +48,47 @@ public class PayloadDispatcher implements ByteBufferConsumer {
     }
   }
 
+  public void onDroppedTrace(int spanCount) {
+    droppedSpanCount.inc(spanCount);
+    droppedTraceCount.inc();
+  }
+
   void addTrace(List<? extends CoreSpan<?>> trace) {
     selectTraceMapper();
     // the call below is blocking and will trigger IO if a flush is necessary
     // there are alternative approaches to avoid blocking here, such as
     // introducing an unbound queue and another thread to do the IO
     // however, we can't block the application threads from here.
-    if (null != traceMapper) {
-      packer.format(trace, traceMapper);
-    } else {
+    if (null == traceMapper || !packer.format(trace, traceMapper)) {
       healthMetrics.onFailedPublish(trace.get(0).samplingPriority());
     }
   }
 
   private void selectTraceMapper() {
     if (null == traceMapper) {
-      this.traceMapper = api.selectTraceMapper();
+      featuresDiscovery.discover();
+      String tracesUrl = featuresDiscovery.getTraceEndpoint();
+      if (DDAgentFeaturesDiscovery.V5_ENDPOINT.equalsIgnoreCase(tracesUrl)) {
+        this.traceMapper = new TraceMapperV0_5();
+      } else if (null != tracesUrl) {
+        this.traceMapper = new TraceMapperV0_4();
+      }
       if (null != traceMapper && null == packer) {
         this.batchTimer =
             monitoring.newTimer(
                 "tracer.trace.buffer.fill.time", "endpoint:" + traceMapper.endpoint());
-        this.packer = new MsgPackWriter(this, ByteBuffer.allocate(traceMapper.messageBufferSize()));
+        this.packer = new MsgPackWriter(new FlushingBuffer(traceMapper.messageBufferSize(), this));
         batchTimer.start();
       }
     }
+  }
+
+  Payload newPayload(int messageCount, ByteBuffer buffer) {
+    return traceMapper
+        .newPayload()
+        .withBody(messageCount, buffer)
+        .withDroppedSpans(droppedSpanCount.getAndReset())
+        .withDroppedTraces(droppedTraceCount.getAndReset());
   }
 
   @Override
@@ -66,7 +97,7 @@ public class PayloadDispatcher implements ByteBufferConsumer {
     // or when the packer is flushed at a heartbeat
     if (messageCount > 0) {
       batchTimer.reset();
-      Payload payload = traceMapper.newPayload().withBody(messageCount, buffer);
+      Payload payload = newPayload(messageCount, buffer);
       final int sizeInBytes = payload.sizeInBytes();
       healthMetrics.onSerialize(sizeInBytes);
       DDAgentApi.Response response = api.sendSerializedTraces(payload);

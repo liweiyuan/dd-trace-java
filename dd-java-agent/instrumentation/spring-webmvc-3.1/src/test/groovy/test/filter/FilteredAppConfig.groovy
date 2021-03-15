@@ -33,6 +33,7 @@ import javax.servlet.http.HttpServletResponse
 
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.ERROR
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.EXCEPTION
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.FORWARDED
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.PATH_PARAM
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.QUERY_PARAM
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.REDIRECT
@@ -74,68 +75,72 @@ class FilteredAppConfig extends WebMvcConfigurerAdapter {
   HttpMessageConverter<Map<String, Object>> createPlainMapMessageConverter() {
     return new AbstractHttpMessageConverter<Map<String, Object>>(MediaType.TEXT_PLAIN) {
 
-      @Override
-      protected boolean supports(Class<?> clazz) {
-        return Map.isAssignableFrom(clazz)
-      }
+        @Override
+        protected boolean supports(Class<?> clazz) {
+          return Map.isAssignableFrom(clazz)
+        }
 
-      @Override
-      protected Map<String, Object> readInternal(Class<? extends Map<String, Object>> clazz, HttpInputMessage inputMessage) throws IOException, HttpMessageNotReadableException {
-        return null
-      }
+        @Override
+        protected Map<String, Object> readInternal(Class<? extends Map<String, Object>> clazz, HttpInputMessage inputMessage) throws IOException, HttpMessageNotReadableException {
+          return null
+        }
 
-      @Override
-      protected void writeInternal(Map<String, Object> stringObjectMap, HttpOutputMessage outputMessage) throws IOException, HttpMessageNotWritableException {
-        StreamUtils.copy(stringObjectMap.get("message"), Charsets.UTF_8, outputMessage.getBody())
+        @Override
+        protected void writeInternal(Map<String, Object> stringObjectMap, HttpOutputMessage outputMessage) throws IOException, HttpMessageNotWritableException {
+          StreamUtils.copy(stringObjectMap.get("message"), Charsets.UTF_8, outputMessage.getBody())
+        }
       }
-    }
   }
 
   @Bean
   Filter servletFilter() {
     return new Filter() {
 
-      @Override
-      void init(FilterConfig filterConfig) throws ServletException {
-      }
+        @Override
+        void init(FilterConfig filterConfig) throws ServletException {
+        }
 
-      @Override
-      void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) throws IOException, ServletException {
-        HttpServletRequest req = (HttpServletRequest) request
-        HttpServletResponse resp = (HttpServletResponse) response
-        HttpServerTest.ServerEndpoint endpoint = HttpServerTest.ServerEndpoint.forPath(req.servletPath)
-        HttpServerTest.controller(endpoint) {
-          resp.contentType = "text/plain"
-          switch (endpoint) {
-            case SUCCESS:
-              resp.status = endpoint.status
-              resp.writer.print(endpoint.body)
-              break
-            case QUERY_PARAM:
-              resp.status = endpoint.status
-              resp.writer.print(req.queryString)
-              break
-            case PATH_PARAM:
-              resp.status = endpoint.status
-              resp.writer.print(endpoint.body)
-              break
-            case REDIRECT:
-              resp.sendRedirect(endpoint.body)
-              break
-            case ERROR:
-              resp.sendError(endpoint.status, endpoint.body)
-              break
-            case EXCEPTION:
-              throw new Exception(endpoint.body)
-            default:
-              chain.doFilter(request, response)
+        @Override
+        void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) throws IOException, ServletException {
+          HttpServletRequest req = (HttpServletRequest) request
+          HttpServletResponse resp = (HttpServletResponse) response
+          HttpServerTest.ServerEndpoint endpoint = HttpServerTest.ServerEndpoint.forPath(req.servletPath)
+          HttpServerTest.controller(endpoint) {
+            resp.contentType = "text/plain"
+            switch (endpoint) {
+              case SUCCESS:
+                resp.status = endpoint.status
+                resp.writer.print(endpoint.body)
+                break
+              case FORWARDED:
+                resp.status = endpoint.status
+                resp.writer.print(req.getHeader("x-forwarded-for"))
+                break
+              case QUERY_PARAM:
+                resp.status = endpoint.status
+                resp.writer.print(req.queryString)
+                break
+              case PATH_PARAM:
+                resp.status = endpoint.status
+                resp.writer.print(endpoint.body)
+                break
+              case REDIRECT:
+                resp.sendRedirect(endpoint.body)
+                break
+              case ERROR:
+                resp.sendError(endpoint.status, endpoint.body)
+                break
+              case EXCEPTION:
+                throw new Exception(endpoint.body)
+              default:
+                chain.doFilter(request, response)
+            }
           }
         }
-      }
 
-      @Override
-      void destroy() {
+        @Override
+        void destroy() {
+        }
       }
-    }
   }
 }

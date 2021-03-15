@@ -1,11 +1,14 @@
 package datadog.trace.bootstrap;
 
 import static datadog.trace.api.Platform.isJavaVersionAtLeast;
+import static datadog.trace.bootstrap.Library.WILDFLY;
+import static datadog.trace.bootstrap.Library.detectLibraries;
 import static datadog.trace.util.AgentThreadFactory.AgentThread.JMX_STARTUP;
 import static datadog.trace.util.AgentThreadFactory.AgentThread.PROFILER_STARTUP;
 import static datadog.trace.util.AgentThreadFactory.AgentThread.TRACE_STARTUP;
 import static datadog.trace.util.AgentThreadFactory.newAgentThread;
 
+import datadog.trace.util.AgentTaskScheduler;
 import datadog.trace.util.AgentThreadFactory.AgentThread;
 import java.lang.instrument.Instrumentation;
 import java.lang.management.ManagementFactory;
@@ -13,6 +16,9 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.URL;
+import java.util.EnumSet;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,6 +42,8 @@ public class Agent {
   private static final String SIMPLE_LOGGER_DEFAULT_LOG_LEVEL_PROPERTY =
       "datadog.slf4j.simpleLogger.defaultLogLevel";
 
+  private static final int DEFAULT_JMX_FETCH_START_DELAY = 15; // seconds
+
   // We cannot use lombok here because we need to configure logger first
   private static final Logger log;
 
@@ -44,6 +52,8 @@ public class Agent {
     configureLogger();
     log = LoggerFactory.getLogger(Agent.class);
   }
+
+  private static final AtomicBoolean jmxStarting = new AtomicBoolean();
 
   // fields must be managed under class lock
   private static ClassLoader PARENT_CLASSLOADER = null;
@@ -63,9 +73,10 @@ public class Agent {
 
     startDatadogAgent(inst, bootstrapURL);
 
-    final boolean appUsingCustomLogManager = isAppUsingCustomLogManager();
+    final EnumSet<Library> libraries = detectLibraries(log);
 
-    final boolean appUsingCustomJMXBuilder = isAppUsingCustomJMXBuilder();
+    final boolean appUsingCustomLogManager = isAppUsingCustomLogManager(libraries);
+    final boolean appUsingCustomJMXBuilder = isAppUsingCustomJMXBuilder(libraries);
 
     /*
      * java.util.logging.LogManager maintains a final static LogManager, which is created during class initialization.
@@ -84,14 +95,17 @@ public class Agent {
      * JMXFetch until we detect the custom MBeanServerBuilder is being used. This takes precedence over the custom
      * log manager check because any custom log manager will be installed before any custom MBeanServerBuilder.
      */
+    int jmxStartDelay = getJmxStartDelay();
     if (appUsingCustomJMXBuilder) {
       log.debug("Custom JMX builder detected. Delaying JMXFetch initialization.");
-      registerMBeanServerBuilderCallback(new StartJmxCallback(bootstrapURL));
+      registerMBeanServerBuilderCallback(new StartJmxCallback(bootstrapURL, jmxStartDelay));
+      // one minute fail-safe in case nothing touches JMX and and callback isn't triggered
+      scheduleJmxStart(bootstrapURL, 60 + jmxStartDelay);
     } else if (appUsingCustomLogManager) {
       log.debug("Custom logger detected. Delaying JMXFetch initialization.");
-      registerLogManagerCallback(new StartJmxCallback(bootstrapURL));
+      registerLogManagerCallback(new StartJmxCallback(bootstrapURL, jmxStartDelay));
     } else {
-      startJmx(bootstrapURL);
+      scheduleJmxStart(bootstrapURL, jmxStartDelay);
     }
 
     /*
@@ -107,12 +121,23 @@ public class Agent {
     }
 
     /*
-     * Similar thing happens with Profiler on (at least) zulu-8 because it uses OkHttp which indirectly loads JFR
-     * events which in turn loads LogManager. This is not a problem on newer JDKs because there JFR uses different
-     * logging facility.
+     * Similar thing happens with Profiler:
+     * a) on zulu-8 because it is using OkHttp which indirectly loads JFR events which in turn loads LogManager. This is not a problem on newer JDKs because there JFR uses different logging facility.
+     * b) on Oracle JDK 8 because we need JMX to communicate with JFR engine and initializing JMX will cause an attempt to load LogManager.
      */
-    if (!isJavaVersionAtLeast(9) && appUsingCustomLogManager) {
-      log.debug("Custom logger detected. Delaying Profiling Agent startup.");
+    boolean shouldDelayProfilerStartup = false;
+    if (!isJavaVersionAtLeast(9)) {
+      if (appUsingCustomLogManager) {
+        log.debug("Custom logger detected. Delaying Profiling Agent startup.");
+        shouldDelayProfilerStartup = true;
+      }
+      if (System.getProperty("java.vendor").contains("Oracle")
+          && !System.getProperty("java.runtime.name").contains("OpenJDK")) {
+        log.debug("Oracle JDK 8 detected. Delaying Profiling Agent startup");
+        shouldDelayProfilerStartup = true;
+      }
+    }
+    if (shouldDelayProfilerStartup) {
       registerLogManagerCallback(new StartProfilingAgentCallback(inst, bootstrapURL));
     } else {
       startProfilingAgent(bootstrapURL, false);
@@ -180,8 +205,11 @@ public class Agent {
   }
 
   protected static class StartJmxCallback extends ClassLoadCallBack {
-    StartJmxCallback(final URL bootstrapURL) {
+    private final int jmxStartDelay;
+
+    StartJmxCallback(final URL bootstrapURL, final int jmxStartDelay) {
       super(bootstrapURL);
+      this.jmxStartDelay = jmxStartDelay;
     }
 
     @Override
@@ -191,7 +219,9 @@ public class Agent {
 
     @Override
     public void execute() {
-      startJmx(bootstrapURL);
+      // finish building platform JMX from context of custom builder before starting JMXFetch
+      ManagementFactory.getPlatformMBeanServer();
+      scheduleJmxStart(bootstrapURL, jmxStartDelay);
     }
   }
 
@@ -287,17 +317,31 @@ public class Agent {
     }
   }
 
+  private static void scheduleJmxStart(final URL bootstrapURL, final int jmxStartDelay) {
+    if (jmxStartDelay > 0) {
+      AgentTaskScheduler.INSTANCE.scheduleWithJitter(
+          new JmxStartTask(), bootstrapURL, jmxStartDelay, TimeUnit.SECONDS);
+    } else {
+      startJmx(bootstrapURL);
+    }
+  }
+
+  static final class JmxStartTask implements AgentTaskScheduler.Task<URL> {
+    @Override
+    public void run(final URL bootstrapURL) {
+      startJmx(bootstrapURL);
+    }
+  }
+
   private static synchronized void startJmx(final URL bootstrapURL) {
-    // load core JMX using the inherited thread-context-classloader
-    ManagementFactory.getPlatformMBeanServer();
-
-    startJmxFetch(bootstrapURL);
-
     if (AGENT_CLASSLOADER == null) {
       throw new IllegalStateException("Datadog agent should have been started already");
     }
+    if (jmxStarting.getAndSet(true)) {
+      return; // another thread is already in startJmx
+    }
+    startJmxFetch(bootstrapURL);
     initializeJmxSystemAccessProvider(AGENT_CLASSLOADER);
-
     registerDeadlockDetectionEvent(bootstrapURL);
   }
 
@@ -464,8 +508,7 @@ public class Agent {
       return Boolean.parseBoolean(tracerDebugLevelProp);
     }
 
-    final String tracerDebugLevelEnv =
-        System.getenv(tracerDebugLevelSysprop.replace('.', '_').toUpperCase());
+    final String tracerDebugLevelEnv = ddGetEnv(tracerDebugLevelSysprop);
 
     if (tracerDebugLevelEnv != null) {
       return Boolean.parseBoolean(tracerDebugLevelEnv);
@@ -482,10 +525,27 @@ public class Agent {
     final String startupLogsSysprop = "dd.trace.startup.logs";
     String startupLogsEnabled = System.getProperty(startupLogsSysprop);
     if (startupLogsEnabled == null) {
-      startupLogsEnabled = System.getenv(startupLogsSysprop.replace('.', '_').toUpperCase());
+      startupLogsEnabled = ddGetEnv(startupLogsSysprop);
     }
     // assume true unless it's explicitly set to "false"
     return !"false".equalsIgnoreCase(startupLogsEnabled);
+  }
+
+  /** @return configured JMX start delay in seconds */
+  private static int getJmxStartDelay() {
+    final String jmxStartDelaySysprop = "dd.jmxfetch.start-delay";
+    String jmxStartDelay = System.getProperty(jmxStartDelaySysprop);
+    if (jmxStartDelay == null) {
+      jmxStartDelay = ddGetEnv(jmxStartDelaySysprop);
+    }
+    if (jmxStartDelay != null) {
+      try {
+        return Integer.parseInt(jmxStartDelay);
+      } catch (NumberFormatException e) {
+        // fall back to default delay
+      }
+    }
+    return DEFAULT_JMX_FETCH_START_DELAY;
   }
 
   /**
@@ -494,11 +554,10 @@ public class Agent {
    *
    * @return true if we detect a custom log manager being used.
    */
-  private static boolean isAppUsingCustomLogManager() {
+  private static boolean isAppUsingCustomLogManager(final EnumSet<Library> libraries) {
     final String tracerCustomLogManSysprop = "dd.app.customlogmanager";
     final String customLogManagerProp = System.getProperty(tracerCustomLogManSysprop);
-    final String customLogManagerEnv =
-        System.getenv(tracerCustomLogManSysprop.replace('.', '_').toUpperCase());
+    final String customLogManagerEnv = ddGetEnv(tracerCustomLogManSysprop);
 
     if (customLogManagerProp != null || customLogManagerEnv != null) {
       log.debug("Prop - customlogmanager: " + customLogManagerProp);
@@ -508,21 +567,14 @@ public class Agent {
           || Boolean.parseBoolean(customLogManagerEnv);
     }
 
-    final String jbossHome = System.getenv("JBOSS_HOME");
-    if (jbossHome != null) {
-      log.debug("Env - jboss: " + jbossHome);
-      // JBoss/Wildfly is known to set a custom log manager after startup.
-      // Originally we were checking for the presence of a jboss class,
-      // but it seems some non-jboss applications have jboss classes on the classpath.
-      // This would cause jmxfetch initialization to be delayed indefinitely.
-      // Checking for an environment variable required by jboss instead.
-      return true;
+    if (libraries.contains(WILDFLY)) {
+      return true; // Wildfly is known to set a custom log manager after startup.
     }
 
     final String logManagerProp = System.getProperty("java.util.logging.manager");
     if (logManagerProp != null) {
       final boolean onSysClasspath =
-          ClassLoader.getSystemResource(logManagerProp.replaceAll("\\.", "/") + ".class") != null;
+          ClassLoader.getSystemResource(logManagerProp.replace('.', '/') + ".class") != null;
       log.debug("Prop - logging.manager: " + logManagerProp);
       log.debug("logging.manager on system classpath: " + onSysClasspath);
       // Some applications set java.util.logging.manager but never actually initialize the logger.
@@ -540,11 +592,10 @@ public class Agent {
    *
    * @return true if we detect a custom JMX builder being used.
    */
-  private static boolean isAppUsingCustomJMXBuilder() {
+  private static boolean isAppUsingCustomJMXBuilder(final EnumSet<Library> libraries) {
     final String tracerCustomJMXBuilderSysprop = "dd.app.customjmxbuilder";
     final String customJMXBuilderProp = System.getProperty(tracerCustomJMXBuilderSysprop);
-    final String customJMXBuilderEnv =
-        System.getenv(tracerCustomJMXBuilderSysprop.replace('.', '_').toUpperCase());
+    final String customJMXBuilderEnv = ddGetEnv(tracerCustomJMXBuilderSysprop);
 
     if (customJMXBuilderProp != null || customJMXBuilderEnv != null) {
       log.debug("Prop - customjmxbuilder: " + customJMXBuilderProp);
@@ -554,10 +605,14 @@ public class Agent {
           || Boolean.parseBoolean(customJMXBuilderEnv);
     }
 
+    if (libraries.contains(WILDFLY)) {
+      return true; // Wildfly is known to set a custom JMX builder after startup.
+    }
+
     final String jmxBuilderProp = System.getProperty("javax.management.builder.initial");
     if (jmxBuilderProp != null) {
       final boolean onSysClasspath =
-          ClassLoader.getSystemResource(jmxBuilderProp.replaceAll("\\.", "/") + ".class") != null;
+          ClassLoader.getSystemResource(jmxBuilderProp.replace('.', '/') + ".class") != null;
       log.debug("Prop - javax.management.builder.initial: " + jmxBuilderProp);
       log.debug("javax.management.builder.initial on system classpath: " + onSysClasspath);
       // Some applications set javax.management.builder.initial but never actually initialize JMX.
@@ -567,6 +622,11 @@ public class Agent {
     }
 
     return false;
+  }
+
+  /** Looks for the "DD_" environment variable equivalent of the given "dd." system property. */
+  private static String ddGetEnv(final String sysProp) {
+    return System.getenv(sysProp.replace('.', '_').replace('-', '_').toUpperCase());
   }
 
   private static boolean isJavaBefore9WithJFR() {

@@ -42,7 +42,6 @@ class DatadogHttpCodec {
       for (final Map.Entry<String, String> entry : context.baggageItems()) {
         setter.set(carrier, OT_BAGGAGE_PREFIX + entry.getKey(), HttpCodec.encode(entry.getValue()));
       }
-      log.debug("{} - Datadog parent context injected", context.getTraceId());
     }
   }
 
@@ -73,6 +72,9 @@ class DatadogHttpCodec {
 
     @Override
     public boolean accept(String key, String value) {
+      if (null == key || key.isEmpty()) {
+        return true;
+      }
       String lowerCaseKey = null;
       int classification = IGNORE;
       char first = Character.toLowerCase(key.charAt(0));
@@ -86,6 +88,8 @@ class DatadogHttpCodec {
             classification = SAMPLING_PRIORITY;
           } else if (ORIGIN_KEY.equalsIgnoreCase(key)) {
             classification = ORIGIN;
+          } else if (handledForwarding(key, value)) {
+            return true;
           }
           break;
         case 'o':
@@ -93,6 +97,7 @@ class DatadogHttpCodec {
           if (lowerCaseKey.startsWith(OT_BAGGAGE_PREFIX)) {
             classification = OT_BAGGAGE;
           }
+          break;
         default:
       }
       if (!taggedHeaders.isEmpty() && classification == IGNORE) {
@@ -138,6 +143,7 @@ class DatadogHttpCodec {
                       lowerCaseKey.substring(OT_BAGGAGE_PREFIX.length()), HttpCodec.decode(value));
                 }
                 break;
+              default:
             }
           }
         } catch (RuntimeException e) {

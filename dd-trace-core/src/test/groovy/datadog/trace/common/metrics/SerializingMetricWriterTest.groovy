@@ -14,7 +14,9 @@ import static datadog.trace.api.Platform.isJavaVersionAtLeast
 import static java.util.concurrent.TimeUnit.MILLISECONDS
 import static java.util.concurrent.TimeUnit.SECONDS
 
-@Requires({ isJavaVersionAtLeast(8) })
+@Requires({
+  isJavaVersionAtLeast(8)
+})
 class SerializingMetricWriterTest extends DDSpecification {
 
   def "should produce correct message" () {
@@ -23,7 +25,7 @@ class SerializingMetricWriterTest extends DDSpecification {
     long duration = SECONDS.toNanos(10)
     WellKnownTags wellKnownTags = new WellKnownTags("hostname", "env", "service", "version")
     ValidatingSink sink = new ValidatingSink(wellKnownTags, startTime, duration, content)
-    SerializingMetricWriter writer = new SerializingMetricWriter(wellKnownTags, sink)
+    SerializingMetricWriter writer = new SerializingMetricWriter(wellKnownTags, sink, 128)
 
     when:
     writer.startBucket(content.size(), startTime, duration)
@@ -41,7 +43,10 @@ class SerializingMetricWriterTest extends DDSpecification {
       [
         Pair.of(new MetricKey("resource1", "service1", "operation1", "type", 0), new AggregateMetric().recordDurations(10, new AtomicLongArray(1L))),
         Pair.of(new MetricKey("resource2", "service2", "operation2", "type2", 200), new AggregateMetric().recordDurations(9, new AtomicLongArray(1L)))
-      ]
+      ],
+      (0..10000).collect({ i ->
+        Pair.of(new MetricKey("resource" + i, "service" + i, "operation" + i, "type", 0), new AggregateMetric().recordDurations(10, new AtomicLongArray(1L)))
+      })
     ]
   }
 
@@ -55,7 +60,7 @@ class SerializingMetricWriterTest extends DDSpecification {
     private List<Pair<MetricKey, AggregateMetric>> content
 
     ValidatingSink(WellKnownTags wellKnownTags, long startTimeNanos, long duration,
-                   List<Pair<MetricKey, AggregateMetric>> content) {
+    List<Pair<MetricKey, AggregateMetric>> content) {
       this.wellKnownTags = wellKnownTags
       this.startTimeNanos = startTimeNanos
       this.duration = duration
@@ -64,7 +69,6 @@ class SerializingMetricWriterTest extends DDSpecification {
 
     @Override
     void register(EventListener listener) {
-
     }
 
     @Override
@@ -93,7 +97,7 @@ class SerializingMetricWriterTest extends DDSpecification {
         MetricKey key = pair.getLeft()
         AggregateMetric value = pair.getRight()
         int size = unpacker.unpackMapHeader()
-        assert size == 10
+        assert size == 11
         int elementCount = 0
         assert unpacker.unpackString() == "Name"
         assert unpacker.unpackString() == key.getOperationName() as String
@@ -115,6 +119,9 @@ class SerializingMetricWriterTest extends DDSpecification {
         ++elementCount
         assert unpacker.unpackString() == "Errors"
         assert unpacker.unpackInt() == value.getErrorCount()
+        ++elementCount
+        assert unpacker.unpackString() == "TopLevelHits"
+        assert unpacker.unpackInt() == value.getTopLevelCount()
         ++elementCount
         assert unpacker.unpackString() == "Duration"
         assert unpacker.unpackLong() == value.getDuration()

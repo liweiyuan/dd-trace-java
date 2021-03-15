@@ -10,7 +10,6 @@ import datadog.trace.context.ScopeListener;
 import datadog.trace.context.TraceScope;
 import java.util.Collections;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicReference;
 
 public class AgentTracer {
 
@@ -43,6 +42,10 @@ public class AgentTracer {
     return get().activateSpan(span, ScopeSource.INSTRUMENTATION, isAsyncPropagating);
   }
 
+  public static TraceScope.Continuation captureSpan(final AgentSpan span) {
+    return get().captureSpan(span, ScopeSource.INSTRUMENTATION);
+  }
+
   public static AgentSpan activeSpan() {
     return get().activeSpan();
   }
@@ -61,24 +64,24 @@ public class AgentTracer {
 
   private static final TracerAPI DEFAULT = new NoopTracerAPI();
 
-  private static final AtomicReference<TracerAPI> provider = new AtomicReference<>(DEFAULT);
+  private static volatile TracerAPI provider = DEFAULT;
 
   public static boolean isRegistered() {
-    return provider.get() != DEFAULT;
+    return provider != DEFAULT;
   }
 
-  public static void registerIfAbsent(final TracerAPI trace) {
-    if (trace != null && trace != DEFAULT) {
-      provider.compareAndSet(DEFAULT, trace);
+  public static synchronized void registerIfAbsent(final TracerAPI tracer) {
+    if (tracer != null && tracer != DEFAULT) {
+      provider = tracer;
     }
   }
 
-  public static void forceRegister(TracerAPI tracer) {
-    provider.set(tracer);
+  public static synchronized void forceRegister(TracerAPI tracer) {
+    provider = tracer;
   }
 
   public static TracerAPI get() {
-    return provider.get();
+    return provider;
   }
 
   // Not intended to be constructed.
@@ -96,6 +99,8 @@ public class AgentTracer {
     AgentScope activateSpan(AgentSpan span, ScopeSource source);
 
     AgentScope activateSpan(AgentSpan span, ScopeSource source, boolean isAsyncPropagating);
+
+    TraceScope.Continuation captureSpan(AgentSpan span, ScopeSource source);
 
     AgentSpan activeSpan();
 
@@ -175,6 +180,11 @@ public class AgentTracer {
     }
 
     @Override
+    public TraceScope.Continuation captureSpan(final AgentSpan span, final ScopeSource source) {
+      return NoopContinuation.INSTANCE;
+    }
+
+    @Override
     public AgentSpan activeSpan() {
       return NoopAgentSpan.INSTANCE;
     }
@@ -235,7 +245,7 @@ public class AgentTracer {
     public <C> void inject(final Context context, final C carrier, final Setter<C> setter) {}
 
     @Override
-    public <C> Context extract(final C carrier, final ContextVisitor<C> getter) {
+    public <C> Context.Extracted extract(final C carrier, final ContextVisitor<C> getter) {
       return null;
     }
   }
@@ -259,7 +269,7 @@ public class AgentTracer {
     }
 
     @Override
-    public Boolean isError() {
+    public boolean isError() {
       return false;
     }
 
@@ -495,7 +505,7 @@ public class AgentTracer {
     public <C> void inject(final Context context, final C carrier, final Setter<C> setter) {}
 
     @Override
-    public <C> Context extract(final C carrier, final ContextVisitor<C> getter) {
+    public <C> Context.Extracted extract(final C carrier, final ContextVisitor<C> getter) {
       return NoopContext.INSTANCE;
     }
   }
@@ -512,7 +522,7 @@ public class AgentTracer {
     public void cancel() {}
   }
 
-  public static class NoopContext implements Context {
+  public static class NoopContext implements Context.Extracted {
     public static final NoopContext INSTANCE = new NoopContext();
 
     @Override
@@ -533,6 +543,16 @@ public class AgentTracer {
     @Override
     public Iterable<Map.Entry<String, String>> baggageItems() {
       return Collections.emptyList();
+    }
+
+    @Override
+    public String getForwardedFor() {
+      return null;
+    }
+
+    @Override
+    public String getForwardedPort() {
+      return null;
     }
   }
 

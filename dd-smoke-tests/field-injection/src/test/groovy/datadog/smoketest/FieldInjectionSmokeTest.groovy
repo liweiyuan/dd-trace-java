@@ -6,16 +6,22 @@ import spock.lang.Timeout
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.Paths
 import java.util.concurrent.ForkJoinTask
 import java.util.concurrent.FutureTask
 import java.util.concurrent.RecursiveTask
 import java.util.concurrent.RunnableFuture
 import java.util.concurrent.TimeUnit
+import java.util.regex.Matcher
+import java.util.regex.Pattern
 
 import static datadog.trace.test.util.ForkedTestUtils.getMaxMemoryArgumentForFork
 import static datadog.trace.test.util.ForkedTestUtils.getMinMemoryArgumentForFork
 
 class FieldInjectionSmokeTest extends Specification {
+
+  private static final Pattern CONTEXT_STORE_ALLOCATION =
+  Pattern.compile('.*Allocated ContextStore #(\\d+) to (\\S+) -> (\\S+)')
 
   String javaPath() {
     final String separator = System.getProperty("file.separator")
@@ -26,6 +32,8 @@ class FieldInjectionSmokeTest extends Specification {
   protected String buildDirectory = System.getProperty("datadog.smoketest.builddir")
   @Shared
   protected String shadowJarPath = System.getProperty("datadog.smoketest.agent.shadowJar.path")
+  @Shared
+  protected String logFilePath = "${buildDirectory}/reports/testProcess.${this.getClass().getName()}.log"
 
   @Timeout(value = 20, unit = TimeUnit.SECONDS)
   def "types are injected with expected fields"() {
@@ -39,7 +47,10 @@ class FieldInjectionSmokeTest extends Specification {
     testedTypesAndExpectedFields.put(FutureTask.getName(),
       new HashSet<>([fieldName(RunnableFuture)]))
     testedTypesAndExpectedFields.put("java.util.concurrent.CompletableFuture\$UniCompletion",
-      new HashSet<>([fieldName(ForkJoinTask), fieldName("java.util.concurrent.CompletableFuture\$UniCompletion")]))
+      new HashSet<>([
+        fieldName(ForkJoinTask),
+        fieldName("java.util.concurrent.CompletableFuture\$UniCompletion")
+      ]))
     String jar = System.getProperty("datadog.smoketest.fieldinjection.shadowJar.path")
     List<String> command = new ArrayList<>()
     command.add(javaPath())
@@ -49,6 +60,7 @@ class FieldInjectionSmokeTest extends Specification {
     command.add("-XX:ErrorFile=/tmp/hs_err_pid%p.log")
     command.add("-Ddd.writer.type=TraceStructureWriter")
     command.add("-Ddd.trace.debug=true")
+    command.add("-Ddd.trace.legacy.context.field.injection=false")
     command.add("-jar")
     command.add(jar)
     for (String type : testedTypesAndExpectedFields.keySet()) {
@@ -58,8 +70,9 @@ class FieldInjectionSmokeTest extends Specification {
     processBuilder.directory(new File(buildDirectory))
     processBuilder.environment().put("JAVA_HOME", System.getProperty("java.home"))
 
-    Path testOutput = Files.createTempFile("output", "tmp")
-    processBuilder.redirectError(testOutput.toFile())
+    Path testOutput = Paths.get(logFilePath)
+    processBuilder.redirectErrorStream(true)
+    processBuilder.redirectOutput(testOutput.toFile())
     Process testedProcess = processBuilder.start()
 
     expect:
@@ -68,10 +81,12 @@ class FieldInjectionSmokeTest extends Specification {
     Map<String, Set<String>> foundTypesAndFields = new HashMap<>()
     Map<String, List<String>> foundTypesAndInterfaces = new HashMap<>()
     Map<String, List<String>> foundTypesAndGenericInterfaces = new HashMap<>()
+    Map<String, String> storeFieldAliases = new HashMap<>()
     for (String line : lines) {
       System.out.println(line)
       if (line.startsWith("___FIELD___")) {
         String[] parts = line.split(":")
+        parts[2] = storeFieldAliases.get(parts[2])
         foundTypesAndFields.computeIfAbsent(parts[1], { new HashSet<>() }).add(parts[2])
       } else if (line.startsWith("___INTERFACE___")) {
         String[] parts = line.split(":")
@@ -79,6 +94,15 @@ class FieldInjectionSmokeTest extends Specification {
       } else if (line.startsWith("___GENERIC_INTERFACE___")) {
         String[] parts = line.split(":")
         foundTypesAndGenericInterfaces.computeIfAbsent(parts[1], { new HashSet<>() }).add(parts[2])
+      } else {
+        Matcher storeAllocation = CONTEXT_STORE_ALLOCATION.matcher(line)
+        if (storeAllocation.matches()) {
+          // assertions use context key while internally we use storeId,
+          // so we need to record the storeId alias for each context key
+          String storeId = storeAllocation.group(1)
+          String keyName = storeAllocation.group(2)
+          storeFieldAliases.put(fieldName(storeId), fieldName(keyName))
+        }
       }
     }
     assert testedTypesAndExpectedFields == foundTypesAndFields

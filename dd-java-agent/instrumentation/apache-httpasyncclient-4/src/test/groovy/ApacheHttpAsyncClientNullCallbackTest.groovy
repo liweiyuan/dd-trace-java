@@ -14,9 +14,9 @@ class ApacheHttpAsyncClientNullCallbackTest extends HttpClientTest {
 
   @Shared
   RequestConfig requestConfig = RequestConfig.custom()
-    .setConnectTimeout(CONNECT_TIMEOUT_MS)
-    .setSocketTimeout(READ_TIMEOUT_MS)
-    .build()
+  .setConnectTimeout(CONNECT_TIMEOUT_MS)
+  .setSocketTimeout(READ_TIMEOUT_MS)
+  .build()
 
   @AutoCleanup
   @Shared
@@ -27,7 +27,7 @@ class ApacheHttpAsyncClientNullCallbackTest extends HttpClientTest {
   }
 
   @Override
-  int doRequest(String method, URI uri, Map<String, String> headers, Closure callback) {
+  int doRequest(String method, URI uri, Map<String, String> headers, String body, Closure callback) {
     def request = new HttpUriRequest(method, uri)
     headers.entrySet().each {
       request.addHeader(new BasicHeader(it.key, it.value))

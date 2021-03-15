@@ -15,7 +15,17 @@ import static datadog.trace.agent.test.utils.TraceUtils.runUnderTrace
  * H2 classes are called out because the don't implement the Wrapper interface.  They are based an older spec leading to AbstractMethodError
  */
 class JDBCWrappedInterfacesTest extends AgentTestRunner {
+
+  @Override
+  void configurePreAgent() {
+    super.configurePreAgent()
+
+    injectSysConfig("dd.trace.jdbc.prepared.statement.class.name", "test.TestPreparedStatement")
+    injectSysConfig("dd.trace.jdbc.connection.class.name", "test.TestConnection")
+  }
+
   static query = "SELECT 1"
+  static obfuscatedQuery = "SELECT ?"
 
   def "prepare on unwrapped conn, execute unwrapped stmt"() {
     setup:
@@ -233,14 +243,14 @@ class JDBCWrappedInterfacesTest extends AgentTestRunner {
   }
 
   // All of the tests should return the same result
-  def assertDBTraces(String database = "testdb") {
+  def assertDBTraces(String database = "testdb", String operation = "SELECT") {
     assertTraces(1) {
       trace(2) {
         basicSpan(it, "parent")
         span {
           operationName "${database}.query"
           serviceName "${database}"
-          resourceName query
+          resourceName obfuscatedQuery
           spanType DDSpanTypes.SQL
           childOfPrevious()
           errored false
@@ -248,6 +258,7 @@ class JDBCWrappedInterfacesTest extends AgentTestRunner {
             "$Tags.COMPONENT" "java-jdbc-prepared_statement"
             "$Tags.SPAN_KIND" Tags.SPAN_KIND_CLIENT
             "$Tags.DB_TYPE" "${database}"
+            "$Tags.DB_OPERATION" "${operation}"
             defaultTags()
           }
         }

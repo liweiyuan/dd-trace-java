@@ -26,9 +26,9 @@ public final class ConfigDefaults {
   static final boolean DEFAULT_TRACE_ENABLED = true;
   static final boolean DEFAULT_INTEGRATIONS_ENABLED = true;
   static final String DEFAULT_AGENT_WRITER_TYPE = "DDAgentWriter";
-  static final String DEFAULT_PRIORITIZATION_TYPE = "FastLane";
 
   static final boolean DEFAULT_RUNTIME_CONTEXT_FIELD_INJECTION = true;
+  static final boolean DEFAULT_LEGACY_CONTEXT_FIELD_INJECTION = false;
   static final boolean DEFAULT_SERIALVERSIONUID_FIELD_INJECTION = true;
 
   static final boolean DEFAULT_PRIORITY_SAMPLING_ENABLED = true;
@@ -51,7 +51,7 @@ public final class ConfigDefaults {
   static final boolean DEFAULT_PERF_METRICS_ENABLED = false;
   // No default constants for metrics statsd support -- falls back to jmxfetch values
 
-  static final boolean DEFAULT_LOGS_INJECTION_ENABLED = false;
+  static final boolean DEFAULT_LOGS_INJECTION_ENABLED = true;
 
   static final boolean DEFAULT_PROFILING_ENABLED = false;
   static final int DEFAULT_PROFILING_START_DELAY = 10;
@@ -63,6 +63,7 @@ public final class ConfigDefaults {
   static final int DEFAULT_PROFILING_EXCEPTION_SAMPLE_LIMIT = 10_000;
   static final int DEFAULT_PROFILING_EXCEPTION_HISTOGRAM_TOP_ITEMS = 50;
   static final int DEFAULT_PROFILING_EXCEPTION_HISTOGRAM_MAX_COLLECTION_SIZE = 10000;
+  static final boolean DEFAULT_PROFILING_AGENTLESS = false;
 
   static final boolean DEFAULT_KAFKA_CLIENT_PROPAGATION_ENABLED = true;
 

@@ -14,8 +14,8 @@ import scala.Option;
 
 @Slf4j
 public class PlayHttpServerDecorator extends HttpServerDecorator<Request, Request, Result> {
-  public static final CharSequence PLAY_REQUEST = UTF8BytesString.createConstant("play.request");
-  public static final CharSequence PLAY_ACTION = UTF8BytesString.createConstant("play-action");
+  public static final CharSequence PLAY_REQUEST = UTF8BytesString.create("play.request");
+  public static final CharSequence PLAY_ACTION = UTF8BytesString.create("play-action");
   public static final PlayHttpServerDecorator DECORATE = new PlayHttpServerDecorator();
 
   @Override
@@ -54,8 +54,12 @@ public class PlayHttpServerDecorator extends HttpServerDecorator<Request, Reques
   }
 
   @Override
-  public AgentSpan onRequest(final AgentSpan span, final Request request) {
-    super.onRequest(span, request);
+  public AgentSpan onRequest(
+      final AgentSpan span,
+      final Request connection,
+      final Request request,
+      AgentSpan.Context.Extracted context) {
+    super.onRequest(span, connection, request, context);
     if (request != null) {
       // more about routes here:
       // https://github.com/playframework/playframework/blob/master/documentation/manual/releases/release26/migration26/Migration26.md#router-tags-are-now-attributes
@@ -70,7 +74,7 @@ public class PlayHttpServerDecorator extends HttpServerDecorator<Request, Reques
 
   @Override
   public AgentSpan onError(final AgentSpan span, Throwable throwable) {
-    span.setTag(Tags.HTTP_STATUS, 500);
+    span.setTag(Tags.HTTP_STATUS, _500);
     if (throwable != null
         // This can be moved to instanceof check when using Java 8.
         && throwable.getClass().getName().equals("java.util.concurrent.CompletionException")

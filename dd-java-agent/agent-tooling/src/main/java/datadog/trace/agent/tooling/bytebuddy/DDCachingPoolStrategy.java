@@ -1,5 +1,6 @@
 package datadog.trace.agent.tooling.bytebuddy;
 
+import static datadog.trace.bootstrap.AgentClassLoading.LOCATING_CLASS;
 import static net.bytebuddy.agent.builder.AgentBuilder.PoolStrategy;
 
 import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap;
@@ -106,6 +107,14 @@ public class DDCachingPoolStrategy implements PoolStrategy {
 
     final int loaderHash = classLoader.hashCode();
     return createCachingTypePool(loaderHash, loaderRef, classFileLocator);
+  }
+
+  @Override
+  public final TypePool typePool(
+      final ClassFileLocator classFileLocator, final ClassLoader classLoader, final String name) {
+    // FIXME satisfy interface constraint that the currently instrumented type is not used in the
+    // cache
+    return typePool(classFileLocator, classLoader);
   }
 
   private TypePool.CacheProvider createCacheProvider(
@@ -294,15 +303,25 @@ public class DDCachingPoolStrategy implements PoolStrategy {
       // Intentionally not "thread safe". Duplicate work deemed an acceptable trade-off.
       if (!isResolved) {
         Class<?> klass = null;
-        ClassLoader classLoader = loaderRef.get();
-        if (classLoader != null) {
-          try {
-            // Please note that by doing a loadClass, the type we are resolving will bypass
-            // transformation since we are in the middle of a transformation. This should
-            // be a very rare occurrence and not affect any classes we want to instrument.
-            klass = classLoader.loadClass(className);
-          } catch (ClassNotFoundException ignored) {
+        ClassLoader classLoader = null;
+        LOCATING_CLASS.begin();
+        try {
+          // Please note that by doing a loadClass, the type we are resolving will bypass
+          // transformation since we are in the middle of a transformation. This should
+          // be a very rare occurrence and not affect any classes we want to instrument.
+          if (loaderRef != null) {
+            classLoader = loaderRef.get();
+            if (classLoader != null) {
+              klass = classLoader.loadClass(className);
+            } else {
+              // classloader has been unloaded
+            }
+          } else { // bootstrap type resolution
+            klass = Class.forName(className, false, null);
           }
+        } catch (Throwable ignored) {
+        } finally {
+          LOCATING_CLASS.end();
         }
         if (klass != null) {
           // We managed to load the class

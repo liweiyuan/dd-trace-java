@@ -4,6 +4,7 @@ import static io.netty.handler.codec.http.HttpHeaderNames.HOST;
 
 import datadog.trace.bootstrap.instrumentation.api.UTF8BytesString;
 import datadog.trace.bootstrap.instrumentation.decorator.HttpClientDecorator;
+import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpResponse;
 import java.net.URI;
@@ -13,11 +14,19 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class NettyHttpClientDecorator extends HttpClientDecorator<HttpRequest, HttpResponse> {
 
-  public static final CharSequence NETTY_CLIENT = UTF8BytesString.createConstant("netty-client");
+  public static final CharSequence NETTY_CLIENT = UTF8BytesString.create("netty-client");
   public static final CharSequence NETTY_CLIENT_REQUEST =
-      UTF8BytesString.createConstant("netty.client.request");
+      UTF8BytesString.create("netty.client.request");
 
-  public static final NettyHttpClientDecorator DECORATE = new NettyHttpClientDecorator();
+  public static final NettyHttpClientDecorator DECORATE = new NettyHttpClientDecorator("http://");
+  public static final NettyHttpClientDecorator DECORATE_SECURE =
+      new NettyHttpClientDecorator("https://");
+
+  private final String uriPrefix;
+
+  public NettyHttpClientDecorator(String uriPrefix) {
+    this.uriPrefix = uriPrefix;
+  }
 
   @Override
   protected String[] instrumentationNames() {
@@ -36,9 +45,12 @@ public class NettyHttpClientDecorator extends HttpClientDecorator<HttpRequest, H
 
   @Override
   protected URI url(final HttpRequest request) throws URISyntaxException {
+    if (request.method().equals(HttpMethod.CONNECT)) {
+      return new URI(uriPrefix + request.uri());
+    }
     final URI uri = new URI(request.uri());
     if ((uri.getHost() == null || uri.getHost().equals("")) && request.headers().contains(HOST)) {
-      return new URI("http://" + request.headers().get(HOST) + request.uri());
+      return new URI(uriPrefix + request.headers().get(HOST) + request.uri());
     } else {
       return uri;
     }

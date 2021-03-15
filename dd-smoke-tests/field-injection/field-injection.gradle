@@ -1,5 +1,5 @@
 plugins {
-  id "com.github.johnrengelman.shadow" version "5.2.0"
+  id "com.github.johnrengelman.shadow"
 }
 
 ext {
@@ -16,10 +16,7 @@ jar {
 }
 
 shadowJar {
-  configurations = [
-    project.configurations.compile,
-    project.configurations.main_java8Compile
-  ]
+  configurations = [project.configurations.compile, project.configurations.main_java8Compile]
 }
 
 dependencies {

@@ -9,13 +9,14 @@ import org.eclipse.jetty.servlet.ServletContextHandler
 
 import javax.servlet.http.HttpServletRequest
 
-import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.AUTH_REQUIRED
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.CUSTOM_EXCEPTION
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.ERROR
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.EXCEPTION
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.FORWARDED
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.NOT_FOUND
-import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.QUERY_PARAM
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.REDIRECT
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.SUCCESS
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.UNKNOWN
 
 class JettyServlet2Test extends HttpServerTest<Server> {
 
@@ -29,22 +30,19 @@ class JettyServlet2Test extends HttpServerTest<Server> {
     }
     ServletContextHandler servletContext = new ServletContextHandler(null, "/$CONTEXT")
     servletContext.errorHandler = new ErrorHandler() {
-      protected void handleErrorPage(HttpServletRequest request, Writer writer, int code, String message) throws IOException {
-        Throwable th = (Throwable) request.getAttribute("javax.servlet.error.exception")
-        writer.write(th ? th.message : message)
+        protected void handleErrorPage(HttpServletRequest request, Writer writer, int code, String message) throws IOException {
+          Throwable th = (Throwable) request.getAttribute("javax.servlet.error.exception")
+          writer.write(th ? th.message : message)
+        }
       }
-    }
 
     // FIXME: Add tests for security/authentication.
-//    ConstraintSecurityHandler security = setupAuthentication(jettyServer)
-//    servletContext.setSecurityHandler(security)
+    //    ConstraintSecurityHandler security = setupAuthentication(jettyServer)
+    //    servletContext.setSecurityHandler(security)
 
-    servletContext.addServlet(TestServlet2.Sync, SUCCESS.path)
-    servletContext.addServlet(TestServlet2.Sync, QUERY_PARAM.path)
-    servletContext.addServlet(TestServlet2.Sync, REDIRECT.path)
-    servletContext.addServlet(TestServlet2.Sync, ERROR.path)
-    servletContext.addServlet(TestServlet2.Sync, EXCEPTION.path)
-    servletContext.addServlet(TestServlet2.Sync, AUTH_REQUIRED.path)
+    ServerEndpoint.values().findAll { it != NOT_FOUND && it != UNKNOWN }.each {
+      servletContext.addServlet(TestServlet2.Sync, it.path)
+    }
 
     jettyServer.setHandler(servletContext)
     jettyServer.start()
@@ -88,38 +86,32 @@ class JettyServlet2Test extends HttpServerTest<Server> {
   }
 
   void responseSpan(TraceAssert trace, ServerEndpoint endpoint) {
-    if (endpoint == REDIRECT) {
-      trace.span {
-        operationName "servlet.response"
-        resourceName "HttpServletResponse.sendRedirect"
+    String method
+    switch (endpoint) {
+      case REDIRECT:
+        method = "sendRedirect"
+        break
+      case ERROR:
+      case NOT_FOUND:
+      case EXCEPTION:
+      case CUSTOM_EXCEPTION:
+        method = "sendError"
+        break
+      default:
+        throw new UnsupportedOperationException("responseSpan not implemented for " + endpoint)
+    }
+    trace.span {
+      operationName "servlet.response"
+      resourceName "HttpServletResponse.$method"
+      if (endpoint.throwsException) {
+        childOf(trace.span(0)) // Not a child of the controller because sendError called by framework
+      } else {
         childOfPrevious()
-        tags {
-          "component" "java-web-servlet-response"
-          defaultTags()
-        }
       }
-    } else if (endpoint == NOT_FOUND || endpoint == ERROR) {
-      trace.span {
-        operationName "servlet.response"
-        resourceName "HttpServletResponse.sendError"
-        childOfPrevious()
-        tags {
-          "component" "java-web-servlet-response"
-          defaultTags()
-        }
+      tags {
+        "component" "java-web-servlet-response"
+        defaultTags()
       }
-    } else if (endpoint == EXCEPTION) {
-      trace.span {
-        operationName "servlet.response"
-        resourceName "HttpServletResponse.sendError"
-        childOf(span.localRootSpan) // sendError is called by the app server, not the controller.
-        tags {
-          "component" "java-web-servlet-response"
-          defaultTags()
-        }
-      }
-    } else {
-      throw new UnsupportedOperationException("responseSpan not implemented for " + endpoint)
     }
   }
 
@@ -140,7 +132,7 @@ class JettyServlet2Test extends HttpServerTest<Server> {
       tags {
         "$Tags.COMPONENT" component
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
-        "$Tags.PEER_HOST_IPV4" "127.0.0.1"
+        "$Tags.PEER_HOST_IPV4"(endpoint == FORWARDED ? endpoint.body : "127.0.0.1")
         "$Tags.PEER_PORT" Integer
         "$Tags.HTTP_URL" "${endpoint.resolve(address)}"
         "$Tags.HTTP_METHOD" method
@@ -170,26 +162,26 @@ class JettyServlet2Test extends HttpServerTest<Server> {
    * @param jettyServer server to attach login service
    * @return SecurityHandler that can be assigned to servlet
    */
-//  private ConstraintSecurityHandler setupAuthentication(Server jettyServer) {
-//    ConstraintSecurityHandler security = new ConstraintSecurityHandler()
-//
-//    Constraint constraint = new Constraint()
-//    constraint.setName("auth")
-//    constraint.setAuthenticate(true)
-//    constraint.setRoles("role")
-//
-//    ConstraintMapping mapping = new ConstraintMapping()
-//    mapping.setPathSpec("/auth/*")
-//    mapping.setConstraint(constraint)
-//
-//    security.setConstraintMappings(mapping)
-//    security.setAuthenticator(new BasicAuthenticator())
-//
-//    LoginService loginService = new HashLoginService("TestRealm",
-//      "src/test/resources/realm.properties")
-//    security.setLoginService(loginService)
-//    jettyServer.addBean(loginService)
-//
-//    security
-//  }
+  //  private ConstraintSecurityHandler setupAuthentication(Server jettyServer) {
+  //    ConstraintSecurityHandler security = new ConstraintSecurityHandler()
+  //
+  //    Constraint constraint = new Constraint()
+  //    constraint.setName("auth")
+  //    constraint.setAuthenticate(true)
+  //    constraint.setRoles("role")
+  //
+  //    ConstraintMapping mapping = new ConstraintMapping()
+  //    mapping.setPathSpec("/auth/*")
+  //    mapping.setConstraint(constraint)
+  //
+  //    security.setConstraintMappings(mapping)
+  //    security.setAuthenticator(new BasicAuthenticator())
+  //
+  //    LoginService loginService = new HashLoginService("TestRealm",
+  //      "src/test/resources/realm.properties")
+  //    security.setLoginService(loginService)
+  //    jettyServer.addBean(loginService)
+  //
+  //    security
+  //  }
 }

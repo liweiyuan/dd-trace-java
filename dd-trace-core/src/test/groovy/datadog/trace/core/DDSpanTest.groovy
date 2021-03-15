@@ -8,36 +8,27 @@ import datadog.trace.common.sampling.RateByServiceSampler
 import datadog.trace.common.writer.ListWriter
 import datadog.trace.core.propagation.ExtractedContext
 import datadog.trace.core.propagation.TagContext
-import datadog.trace.test.util.DDSpecification
+import datadog.trace.core.test.DDCoreSpecification
 
 import java.util.concurrent.TimeUnit
 
-class DDSpanTest extends DDSpecification {
+class DDSpanTest extends DDCoreSpecification {
 
   def writer = new ListWriter()
   def sampler = new RateByServiceSampler()
-  def tracer = CoreTracer.builder().writer(writer).sampler(sampler).build()
+  def tracer = tracerBuilder().writer(writer).sampler(sampler).build()
+
+  def cleanup() {
+    tracer?.close()
+  }
 
   def "getters and setters"() {
     setup:
-    final DDSpanContext context =
-      new DDSpanContext(
-        DDId.from(1),
-        DDId.from(1),
-        DDId.ZERO,
-        null,
-        "fakeService",
-        "fakeOperation",
-        "fakeResource",
-        PrioritySampling.UNSET,
-        null,
-        Collections.<String, String> emptyMap(),
-        false,
-        "fakeType",
-        0,
-        tracer.pendingTraceFactory.create(DDId.ONE))
-
-    final DDSpan span = DDSpan.create(1L, context)
+    def span = tracer.buildSpan("fakeOperation")
+      .withServiceName("fakeService")
+      .withResourceName("fakeResource")
+      .withSpanType("fakeType")
+      .start()
 
     when:
     span.setServiceName("service")
@@ -70,7 +61,7 @@ class DDSpanTest extends DDSpecification {
     span.getSamplingPriority() == PrioritySampling.SAMPLER_KEEP
 
     when:
-    context.lockSamplingPriority()
+    span.context().lockSamplingPriority()
     span.setSamplingPriority(PrioritySampling.USER_KEEP)
     then:
     span.getSamplingPriority() == PrioritySampling.SAMPLER_KEEP
@@ -90,7 +81,7 @@ class DDSpanTest extends DDSpecification {
     when:
     final String resourceName = "fake"
     final String serviceName = "myService"
-    span = CoreTracer.builder().build()
+    span = tracer
       .buildSpan(opName)
       .withResourceName(resourceName)
       .withServiceName(serviceName)
@@ -202,9 +193,9 @@ class DDSpanTest extends DDSpecification {
     child.@origin == null // Access field directly instead of getter.
 
     where:
-    extractedContext                                                         | _
-    new TagContext("some-origin", [:])                                       | _
-    new ExtractedContext(DDId.ONE, DDId.from(2), 0, "some-origin", [:], [:]) | _
+    extractedContext                                                                     | _
+    new TagContext("some-origin", null, null, [:])                                       | _
+    new ExtractedContext(DDId.ONE, DDId.from(2), 0, "some-origin", null, null, [:], [:]) | _
   }
 
   def "isRootSpan() in and not in the context of distributed tracing"() {
@@ -221,9 +212,9 @@ class DDSpanTest extends DDSpecification {
     root.finish()
 
     where:
-    extractedContext                                                         | isTraceRootSpan
-    null                                                                     | true
-    new ExtractedContext(DDId.from(123), DDId.from(456), 1, "789", [:], [:]) | false
+    extractedContext                                                                     | isTraceRootSpan
+    null                                                                                 | true
+    new ExtractedContext(DDId.from(123), DDId.from(456), 1, "789", null, null, [:], [:]) | false
   }
 
   def "getApplicationRootSpan() in and not in the context of distributed tracing"() {
@@ -243,39 +234,39 @@ class DDSpanTest extends DDSpecification {
     root.finish()
 
     where:
-    extractedContext                                                         | isTraceRootSpan
-    null                                                                     | true
-    new ExtractedContext(DDId.from(123), DDId.from(456), 1, "789", [:], [:]) | false
+    extractedContext                                                                     | isTraceRootSpan
+    null                                                                                 | true
+    new ExtractedContext(DDId.from(123), DDId.from(456), 1, "789", null, null, [:], [:]) | false
   }
 
   def "infer top level from parent service name"() {
     when:
     DDSpanContext context =
       new DDSpanContext(
-        DDId.from(1),
-        DDId.from(1),
-        DDId.ZERO,
-        parentServiceName,
-        "fakeService",
-        "fakeOperation",
-        "fakeResource",
-        PrioritySampling.UNSET,
-        null,
-        Collections.<String, String> emptyMap(),
-        false,
-        "fakeType",
-        0,
-        tracer.pendingTraceFactory.create(DDId.ONE))
+      DDId.from(1),
+      DDId.from(1),
+      DDId.ZERO,
+      parentServiceName,
+      "fakeService",
+      "fakeOperation",
+      "fakeResource",
+      PrioritySampling.UNSET,
+      null,
+      Collections.<String, String> emptyMap(),
+      false,
+      "fakeType",
+      0,
+      tracer.pendingTraceFactory.create(DDId.ONE))
     then:
     context.isTopLevel() == expectTopLevel
 
     where:
     parentServiceName                     | expectTopLevel
-    "foo"                                 |  true
-    UTF8BytesString.create("foo")         |  true
-    "fakeService"                         |  false
-    UTF8BytesString.create("fakeService") |  false
-    ""                                    |  true
-    null                                  |  true
+    "foo"                                 | true
+    UTF8BytesString.create("foo")         | true
+    "fakeService"                         | false
+    UTF8BytesString.create("fakeService") | false
+    ""                                    | true
+    null                                  | true
   }
 }

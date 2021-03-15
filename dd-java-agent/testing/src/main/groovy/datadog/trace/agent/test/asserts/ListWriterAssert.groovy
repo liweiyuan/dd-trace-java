@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import static TraceAssert.assertTrace
 
 class ListWriterAssert {
-  private final List<List<DDSpan>> traces
+  private List<List<DDSpan>> traces
   private final int size
   private final Set<Integer> assertedIndexes = new HashSet<>()
   private final AtomicInteger traceAssertCount = new AtomicInteger(0)
@@ -25,15 +25,15 @@ class ListWriterAssert {
   }
 
   static void assertTraces(ListWriter writer, int expectedSize,
-                           @ClosureParams(value = SimpleType, options = ['datadog.trace.agent.test.asserts.ListWriterAssert'])
-                           @DelegatesTo(value = ListWriterAssert, strategy = Closure.DELEGATE_FIRST) Closure spec) {
+    @ClosureParams(value = SimpleType, options = ['datadog.trace.agent.test.asserts.ListWriterAssert'])
+    @DelegatesTo(value = ListWriterAssert, strategy = Closure.DELEGATE_FIRST) Closure spec) {
     assertTraces(writer, expectedSize, false, spec)
   }
 
   static void assertTraces(ListWriter writer, int expectedSize,
-                           boolean ignoreAdditionalTraces,
-                           @ClosureParams(value = SimpleType, options = ['datadog.trace.agent.test.asserts.ListWriterAssert'])
-                           @DelegatesTo(value = ListWriterAssert, strategy = Closure.DELEGATE_FIRST) Closure spec) {
+    boolean ignoreAdditionalTraces,
+    @ClosureParams(value = SimpleType, options = ['datadog.trace.agent.test.asserts.ListWriterAssert'])
+    @DelegatesTo(value = ListWriterAssert, strategy = Closure.DELEGATE_FIRST) Closure spec) {
     try {
       writer.waitForTraces(expectedSize)
       def array = writer.toArray()
@@ -80,26 +80,26 @@ class ListWriterAssert {
   }
 
   void sortSpansByStart() {
-    traces.each {
-      it.sort { a, b ->
+    traces = traces.collect {
+      return new ArrayList<DDSpan>(it).sort { a, b ->
         return a.startTimeNano <=> b.startTimeNano
       }
     }
   }
 
   List<DDSpan> trace(int index) {
-    return traces.get(index)
+    return Collections.unmodifiableList(traces.get(index))
   }
 
   void trace(int expectedSize,
-             @ClosureParams(value = SimpleType, options = ['datadog.trace.agent.test.asserts.TraceAssert'])
-             @DelegatesTo(value = TraceAssert, strategy = Closure.DELEGATE_FIRST) Closure spec) {
+    @ClosureParams(value = SimpleType, options = ['datadog.trace.agent.test.asserts.TraceAssert'])
+    @DelegatesTo(value = TraceAssert, strategy = Closure.DELEGATE_FIRST) Closure spec) {
     trace(expectedSize, false, spec)
   }
 
   void trace(int expectedSize, boolean sortByName,
-             @ClosureParams(value = SimpleType, options = ['datadog.trace.agent.test.asserts.TraceAssert'])
-             @DelegatesTo(value = TraceAssert, strategy = Closure.DELEGATE_FIRST) Closure spec) {
+    @ClosureParams(value = SimpleType, options = ['datadog.trace.agent.test.asserts.TraceAssert'])
+    @DelegatesTo(value = TraceAssert, strategy = Closure.DELEGATE_FIRST) Closure spec) {
     def index = traceAssertCount.getAndIncrement()
 
     if (index >= size) {

@@ -1,11 +1,13 @@
 package datadog.trace.test.util
 
+import de.thetaphi.forbiddenapis.SuppressForbidden
 import net.bytebuddy.agent.ByteBuddyAgent
 import net.bytebuddy.agent.builder.AgentBuilder
 import net.bytebuddy.dynamic.ClassFileLocator
 import net.bytebuddy.dynamic.Transformer
 import net.bytebuddy.utility.JavaModule
 import org.junit.Rule
+import spock.lang.Shared
 import spock.lang.Specification
 
 import java.lang.reflect.Constructor
@@ -18,7 +20,10 @@ import static net.bytebuddy.description.modifier.Visibility.PUBLIC
 import static net.bytebuddy.matcher.ElementMatchers.named
 import static net.bytebuddy.matcher.ElementMatchers.none
 
+@SuppressForbidden
 abstract class DDSpecification extends Specification {
+  private static final CHECK_TIMEOUT_MS = 3000
+
   static final String CONFIG = "datadog.trace.api.Config"
 
   private static Field configInstanceField
@@ -40,6 +45,11 @@ abstract class DDSpecification extends Specification {
   // doesn't work because the properties object is not cloned for each invocation
   private static Properties originalSystemProperties
 
+  protected boolean assertThreadsEachCleanup = true
+
+  @Shared
+  private boolean ignoreThreadCleanup
+
   static void makeConfigInstanceModifiable() {
     if (isConfigInstanceModifiable || configModificationFailed) {
       return
@@ -50,10 +60,10 @@ abstract class DDSpecification extends Specification {
       new AgentBuilder.Default()
         .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
         .with(AgentBuilder.RedefinitionStrategy.Listener.ErrorEscalating.FAIL_FAST)
-      // Config is injected into the bootstrap, so we need to provide a locator.
+        // Config is injected into the bootstrap, so we need to provide a locator.
         .with(
-          new AgentBuilder.LocationStrategy.Simple(
-            ClassFileLocator.ForClassLoader.ofSystemLoader()))
+        new AgentBuilder.LocationStrategy.Simple(
+        ClassFileLocator.ForClassLoader.ofSystemLoader()))
         .ignore(none()) // Allow transforming bootstrap classes
         .type(named(CONFIG))
         .transform { builder, typeDescription, classLoader, module ->
@@ -104,6 +114,13 @@ abstract class DDSpecification extends Specification {
     assert System.getenv().findAll { it.key.startsWith("DD_") }.isEmpty()
     assert System.getProperties().findAll { it.key.toString().startsWith("dd.") }.isEmpty()
 
+    if (getDDThreads().isEmpty()) {
+      ignoreThreadCleanup = false
+    } else {
+      println "Found DD threads before test started.  Ignoring thread cleanup for this test class"
+      ignoreThreadCleanup = true
+    }
+
     saveProperties()
   }
 
@@ -116,6 +133,8 @@ abstract class DDSpecification extends Specification {
     if (isConfigInstanceModifiable) {
       rebuildConfig()
     }
+
+    checkThreads()
   }
 
   void setup() {
@@ -137,6 +156,41 @@ abstract class DDSpecification extends Specification {
 
     if (isConfigInstanceModifiable) {
       rebuildConfig()
+    }
+
+    if (assertThreadsEachCleanup) {
+      checkThreads()
+    }
+  }
+
+  Set<Thread> getDDThreads() {
+    return Thread.getAllStackTraces()
+      .keySet()
+      .findAll {
+        it.name.startsWith("dd-") &&
+          it.name != "dd-task-scheduler" &&
+          it.name != "dd-cassandra-session-executor" // cassandra instrumentation thread pool
+      }
+  }
+
+  def checkThreads() {
+    if (ignoreThreadCleanup) {
+      return
+    }
+
+    // Give some time for threads to finish to prevent the race
+    // between test cleanup and these assertions
+    long deadline = System.currentTimeMillis() + CHECK_TIMEOUT_MS
+
+    Set<Thread> threads = getDDThreads()
+    while (System.currentTimeMillis() < deadline && !threads.isEmpty()) {
+      Thread.sleep(100)
+      threads = getDDThreads()
+    }
+
+    if (!threads.isEmpty()) {
+      println("WARNING: DD threads still active.  Forget to close() a tracer?")
+      println threads.collect { it.name }
     }
   }
 

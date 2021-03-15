@@ -1,26 +1,41 @@
 package datadog.trace.common.writer
 
 import com.timgroup.statsd.NoOpStatsDClient
+import datadog.trace.api.DDId
+import datadog.trace.api.sampling.PrioritySampling
 import datadog.trace.common.writer.ddagent.DDAgentApi
+import datadog.trace.common.writer.ddagent.DDAgentFeaturesDiscovery
+import datadog.trace.common.writer.ddagent.PayloadDispatcher
 import datadog.trace.common.writer.ddagent.TraceProcessingWorker
+import datadog.trace.core.CoreTracer
+import datadog.trace.core.DDSpan
+import datadog.trace.core.DDSpanContext
+import datadog.trace.core.PendingTrace
 import datadog.trace.core.monitor.HealthMetrics
 import datadog.trace.core.monitor.Monitoring
-import datadog.trace.test.util.DDSpecification
+import datadog.trace.core.test.DDCoreSpecification
 import spock.lang.Subject
 
 import java.util.concurrent.TimeUnit
 
-import static datadog.trace.core.SpanFactory.newSpanOf
+class DDAgentWriterTest extends DDCoreSpecification {
 
-class DDAgentWriterTest extends DDSpecification {
-
+  def discovery = Mock(DDAgentFeaturesDiscovery)
   def api = Mock(DDAgentApi)
   def monitor = Mock(HealthMetrics)
   def worker = Mock(TraceProcessingWorker)
   def monitoring = new Monitoring(new NoOpStatsDClient(), 1, TimeUnit.SECONDS)
 
   @Subject
-  def writer = new DDAgentWriter(api, monitor, monitoring, worker)
+  def writer = new DDAgentWriter(discovery, api, monitor, monitoring, worker)
+
+  // Only used to create spans
+  def dummyTracer = tracerBuilder().writer(new ListWriter()).build()
+
+  def cleanup() {
+    writer.close()
+    dummyTracer.close()
+  }
 
   def "test writer builder"() {
     when:
@@ -35,6 +50,7 @@ class DDAgentWriterTest extends DDSpecification {
     writer.start()
 
     then:
+    1 * monitor.start()
     1 * worker.start()
     1 * worker.getCapacity() >> capacity
     1 * monitor.onStart(capacity)
@@ -84,11 +100,14 @@ class DDAgentWriterTest extends DDSpecification {
   }
 
   def "test writer.write"() {
+    setup:
+    def trace = [dummyTracer.buildSpan("fakeOperation").start()]
+
     when: "publish succeeds"
     writer.write(trace)
 
     then: "monitor is notified of successful publication"
-    1 * worker.publish(_, trace) >> true
+    1 * worker.publish(_, _, trace) >> true
     1 * monitor.onPublish(trace, _)
     0 * _
 
@@ -96,12 +115,9 @@ class DDAgentWriterTest extends DDSpecification {
     writer.write(trace)
 
     then: "monitor is notified of unsuccessful publication"
-    1 * worker.publish(_, trace) >> false
+    1 * worker.publish(_, _, trace) >> false
     1 * monitor.onFailedPublish(_)
     0 * _
-
-    where:
-    trace = [newSpanOf(0, "fixed-thread-name")]
   }
 
   def "empty traces should be reported as failures"() {
@@ -116,6 +132,7 @@ class DDAgentWriterTest extends DDSpecification {
   def "test writer.write closed"() {
     setup:
     writer.close()
+    def trace = [dummyTracer.buildSpan("fakeOperation").start()]
 
     when:
     writer.write(trace)
@@ -123,8 +140,47 @@ class DDAgentWriterTest extends DDSpecification {
     then:
     1 * monitor.onFailedPublish(_)
     0 * _
+  }
 
-    where:
-    trace = [newSpanOf(0, "fixed-thread-name")]
+  def "dropped trace is counted"() {
+    setup:
+    def discovery = Mock(DDAgentFeaturesDiscovery)
+    def api = Mock(DDAgentApi)
+    def worker = Mock(TraceProcessingWorker)
+    def monitor = Stub(HealthMetrics)
+    def dispatcher = Mock(PayloadDispatcher)
+    def writer = new DDAgentWriter(discovery, api, monitor, dispatcher, worker)
+    def p0 = newSpan()
+    p0.setSamplingPriority(PrioritySampling.SAMPLER_DROP)
+    def trace = [p0, newSpan()]
+
+    when:
+    writer.write(trace)
+
+    then:
+    1 * worker.publish(trace[0], PrioritySampling.SAMPLER_DROP, trace) >> false
+    1 * dispatcher.onDroppedTrace(trace.size())
+  }
+
+  def newSpan() {
+    CoreTracer tracer = Mock(CoreTracer)
+    tracer.mapServiceName(_) >> { String serviceName -> serviceName }
+    PendingTrace trace = Mock(PendingTrace)
+    trace.getTracer() >> tracer
+    return new DDSpan(0, new DDSpanContext(
+      DDId.from(1),
+      DDId.from(1),
+      DDId.ZERO,
+      null,
+      "",
+      "",
+      "",
+      PrioritySampling.UNSET,
+      "",
+      [:],
+      false,
+      "",
+      0,
+      trace))
   }
 }

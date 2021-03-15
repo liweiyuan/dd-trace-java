@@ -6,69 +6,6 @@ import datadog.trace.bootstrap.config.provider.ConfigProvider
 import datadog.trace.test.util.DDSpecification
 import org.junit.Rule
 
-import static datadog.trace.api.Config.AGENT_HOST
-import static datadog.trace.api.Config.AGENT_PORT_LEGACY
-import static datadog.trace.api.Config.AGENT_UNIX_DOMAIN_SOCKET
-import static datadog.trace.api.Config.API_KEY
-import static datadog.trace.api.Config.API_KEY_FILE
-import static datadog.trace.api.Config.CONFIGURATION_FILE
-import static datadog.trace.api.Config.GLOBAL_TAGS
-import static datadog.trace.api.Config.HEADER_TAGS
-import static datadog.trace.api.Config.HEALTH_METRICS_ENABLED
-import static datadog.trace.api.Config.HEALTH_METRICS_STATSD_HOST
-import static datadog.trace.api.Config.HEALTH_METRICS_STATSD_PORT
-import static datadog.trace.api.Config.HTTP_CLIENT_ERROR_STATUSES
-import static datadog.trace.api.Config.HTTP_CLIENT_HOST_SPLIT_BY_DOMAIN
-import static datadog.trace.api.Config.HTTP_SERVER_ERROR_STATUSES
-import static datadog.trace.api.Config.ID_GENERATION_STRATEGY
-import static datadog.trace.api.Config.JMX_FETCH_CHECK_PERIOD
-import static datadog.trace.api.Config.JMX_FETCH_ENABLED
-import static datadog.trace.api.Config.JMX_FETCH_METRICS_CONFIGS
-import static datadog.trace.api.Config.JMX_FETCH_REFRESH_BEANS_PERIOD
-import static datadog.trace.api.Config.JMX_FETCH_STATSD_HOST
-import static datadog.trace.api.Config.JMX_FETCH_STATSD_PORT
-import static datadog.trace.api.Config.JMX_TAGS
-import static datadog.trace.api.Config.PARTIAL_FLUSH_MIN_SPANS
-import static datadog.trace.api.Config.PERF_METRICS_ENABLED
-import static datadog.trace.api.Config.PRIORITIZATION_TYPE
-import static datadog.trace.api.Config.PRIORITY_SAMPLING
-import static datadog.trace.api.Config.PROFILING_API_KEY_FILE_OLD
-import static datadog.trace.api.Config.PROFILING_API_KEY_FILE_VERY_OLD
-import static datadog.trace.api.Config.PROFILING_ENABLED
-import static datadog.trace.api.Config.PROFILING_EXCEPTION_HISTOGRAM_MAX_COLLECTION_SIZE
-import static datadog.trace.api.Config.PROFILING_EXCEPTION_HISTOGRAM_TOP_ITEMS
-import static datadog.trace.api.Config.PROFILING_EXCEPTION_SAMPLE_LIMIT
-import static datadog.trace.api.Config.PROFILING_PROXY_HOST
-import static datadog.trace.api.Config.PROFILING_PROXY_PASSWORD
-import static datadog.trace.api.Config.PROFILING_PROXY_PORT
-import static datadog.trace.api.Config.PROFILING_PROXY_USERNAME
-import static datadog.trace.api.Config.PROFILING_START_DELAY
-import static datadog.trace.api.Config.PROFILING_START_FORCE_FIRST
-import static datadog.trace.api.Config.PROFILING_TAGS
-import static datadog.trace.api.Config.PROFILING_TEMPLATE_OVERRIDE_FILE
-import static datadog.trace.api.Config.PROFILING_UPLOAD_COMPRESSION
-import static datadog.trace.api.Config.PROFILING_UPLOAD_PERIOD
-import static datadog.trace.api.Config.PROFILING_UPLOAD_TIMEOUT
-import static datadog.trace.api.Config.PROFILING_URL
-import static datadog.trace.api.Config.PROPAGATION_STYLE_EXTRACT
-import static datadog.trace.api.Config.PROPAGATION_STYLE_INJECT
-import static datadog.trace.api.Config.RUNTIME_CONTEXT_FIELD_INJECTION
-import static datadog.trace.api.Config.SERVICE_MAPPING
-import static datadog.trace.api.Config.SERVICE_NAME
-import static datadog.trace.api.Config.SITE
-import static datadog.trace.api.Config.SPAN_TAGS
-import static datadog.trace.api.Config.SPLIT_BY_TAGS
-import static datadog.trace.api.Config.TAGS
-import static datadog.trace.api.Config.TRACE_AGENT_PORT
-import static datadog.trace.api.Config.TRACE_AGENT_URL
-import static datadog.trace.api.Config.TRACE_ENABLED
-import static datadog.trace.api.Config.TRACE_RATE_LIMIT
-import static datadog.trace.api.Config.TRACE_REPORT_HOSTNAME
-import static datadog.trace.api.Config.TRACE_RESOLVER_ENABLED
-import static datadog.trace.api.Config.TRACE_SAMPLE_RATE
-import static datadog.trace.api.Config.TRACE_SAMPLING_OPERATION_RULES
-import static datadog.trace.api.Config.TRACE_SAMPLING_SERVICE_RULES
-import static datadog.trace.api.Config.WRITER_TYPE
 import static datadog.trace.api.ConfigDefaults.DEFAULT_HTTP_CLIENT_ERROR_STATUSES
 import static datadog.trace.api.ConfigDefaults.DEFAULT_HTTP_SERVER_ERROR_STATUSES
 import static datadog.trace.api.ConfigDefaults.DEFAULT_SERVICE_NAME
@@ -80,7 +17,73 @@ import static datadog.trace.api.DDTags.SERVICE
 import static datadog.trace.api.DDTags.SERVICE_TAG
 import static datadog.trace.api.IdGenerationStrategy.RANDOM
 import static datadog.trace.api.IdGenerationStrategy.SEQUENTIAL
+import static datadog.trace.api.config.GeneralConfig.API_KEY
+import static datadog.trace.api.config.GeneralConfig.API_KEY_FILE
+import static datadog.trace.api.config.GeneralConfig.ENV
+import static datadog.trace.api.config.GeneralConfig.CONFIGURATION_FILE
+import static datadog.trace.api.config.GeneralConfig.GLOBAL_TAGS
+import static datadog.trace.api.config.GeneralConfig.HEALTH_METRICS_ENABLED
+import static datadog.trace.api.config.GeneralConfig.HEALTH_METRICS_STATSD_HOST
+import static datadog.trace.api.config.GeneralConfig.HEALTH_METRICS_STATSD_PORT
+import static datadog.trace.api.config.GeneralConfig.PERF_METRICS_ENABLED
+import static datadog.trace.api.config.GeneralConfig.SERVICE_NAME
+import static datadog.trace.api.config.GeneralConfig.SITE
+import static datadog.trace.api.config.GeneralConfig.TAGS
+import static datadog.trace.api.config.GeneralConfig.VERSION
+import static datadog.trace.api.config.JmxFetchConfig.JMX_FETCH_CHECK_PERIOD
+import static datadog.trace.api.config.JmxFetchConfig.JMX_FETCH_ENABLED
+import static datadog.trace.api.config.JmxFetchConfig.JMX_FETCH_METRICS_CONFIGS
+import static datadog.trace.api.config.JmxFetchConfig.JMX_FETCH_REFRESH_BEANS_PERIOD
+import static datadog.trace.api.config.JmxFetchConfig.JMX_FETCH_STATSD_HOST
+import static datadog.trace.api.config.JmxFetchConfig.JMX_FETCH_STATSD_PORT
+import static datadog.trace.api.config.JmxFetchConfig.JMX_TAGS
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_AGENTLESS
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_API_KEY_FILE_OLD
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_API_KEY_FILE_VERY_OLD
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_ENABLED
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_EXCEPTION_HISTOGRAM_MAX_COLLECTION_SIZE
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_EXCEPTION_HISTOGRAM_TOP_ITEMS
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_EXCEPTION_SAMPLE_LIMIT
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_PROXY_HOST
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_PROXY_PASSWORD
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_PROXY_PORT
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_PROXY_USERNAME
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_START_DELAY
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_START_FORCE_FIRST
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_TAGS
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_TEMPLATE_OVERRIDE_FILE
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_UPLOAD_COMPRESSION
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_UPLOAD_PERIOD
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_UPLOAD_TIMEOUT
+import static datadog.trace.api.config.ProfilingConfig.PROFILING_URL
 import static datadog.trace.api.config.TraceInstrumentationConfig.DB_CLIENT_HOST_SPLIT_BY_INSTANCE
+import static datadog.trace.api.config.TraceInstrumentationConfig.HTTP_CLIENT_HOST_SPLIT_BY_DOMAIN
+import static datadog.trace.api.config.TraceInstrumentationConfig.RUNTIME_CONTEXT_FIELD_INJECTION
+import static datadog.trace.api.config.TraceInstrumentationConfig.TRACE_ENABLED
+import static datadog.trace.api.config.TracerConfig.AGENT_HOST
+import static datadog.trace.api.config.TracerConfig.AGENT_PORT_LEGACY
+import static datadog.trace.api.config.TracerConfig.AGENT_UNIX_DOMAIN_SOCKET
+import static datadog.trace.api.config.TracerConfig.HEADER_TAGS
+import static datadog.trace.api.config.TracerConfig.HTTP_CLIENT_ERROR_STATUSES
+import static datadog.trace.api.config.TracerConfig.HTTP_SERVER_ERROR_STATUSES
+import static datadog.trace.api.config.TracerConfig.ID_GENERATION_STRATEGY
+import static datadog.trace.api.config.TracerConfig.PARTIAL_FLUSH_MIN_SPANS
+import static datadog.trace.api.config.TracerConfig.PRIORITIZATION_TYPE
+import static datadog.trace.api.config.TracerConfig.PRIORITY_SAMPLING
+import static datadog.trace.api.config.TracerConfig.PROPAGATION_STYLE_EXTRACT
+import static datadog.trace.api.config.TracerConfig.PROPAGATION_STYLE_INJECT
+import static datadog.trace.api.config.TracerConfig.SERVICE_MAPPING
+import static datadog.trace.api.config.TracerConfig.SPAN_TAGS
+import static datadog.trace.api.config.TracerConfig.SPLIT_BY_TAGS
+import static datadog.trace.api.config.TracerConfig.TRACE_AGENT_PORT
+import static datadog.trace.api.config.TracerConfig.TRACE_AGENT_URL
+import static datadog.trace.api.config.TracerConfig.TRACE_RATE_LIMIT
+import static datadog.trace.api.config.TracerConfig.TRACE_REPORT_HOSTNAME
+import static datadog.trace.api.config.TracerConfig.TRACE_RESOLVER_ENABLED
+import static datadog.trace.api.config.TracerConfig.TRACE_SAMPLE_RATE
+import static datadog.trace.api.config.TracerConfig.TRACE_SAMPLING_OPERATION_RULES
+import static datadog.trace.api.config.TracerConfig.TRACE_SAMPLING_SERVICE_RULES
+import static datadog.trace.api.config.TracerConfig.WRITER_TYPE
 import static datadog.trace.bootstrap.config.provider.SystemPropertiesConfigSource.PREFIX
 
 class ConfigTest extends DDSpecification {
@@ -122,7 +125,6 @@ class ConfigTest extends DDSpecification {
     prop.setProperty(TRACE_ENABLED, "false")
     prop.setProperty(ID_GENERATION_STRATEGY, "SEQUENTIAL")
     prop.setProperty(WRITER_TYPE, "LoggingWriter")
-    prop.setProperty(PRIORITIZATION_TYPE, "EnsureTrace")
     prop.setProperty(AGENT_HOST, "somehost")
     prop.setProperty(TRACE_AGENT_PORT, "123")
     prop.setProperty(AGENT_UNIX_DOMAIN_SOCKET, "somepath")
@@ -174,6 +176,7 @@ class ConfigTest extends DDSpecification {
     prop.setProperty(PROFILING_EXCEPTION_SAMPLE_LIMIT, "811")
     prop.setProperty(PROFILING_EXCEPTION_HISTOGRAM_TOP_ITEMS, "1121")
     prop.setProperty(PROFILING_EXCEPTION_HISTOGRAM_MAX_COLLECTION_SIZE, "1122")
+    prop.setProperty(PROFILING_AGENTLESS, "true")
 
     when:
     Config config = Config.get(prop)
@@ -185,7 +188,6 @@ class ConfigTest extends DDSpecification {
     config.idGenerationStrategy == SEQUENTIAL
     config.traceEnabled == false
     config.writerType == "LoggingWriter"
-    config.prioritizationType == "EnsureTrace"
     config.agentHost == "somehost"
     config.agentPort == 123
     config.agentUnixDomainSocket == "somepath"
@@ -237,6 +239,7 @@ class ConfigTest extends DDSpecification {
     config.profilingExceptionSampleLimit == 811
     config.profilingExceptionHistogramTopItems == 1121
     config.profilingExceptionHistogramMaxCollectionSize == 1122
+    config.profilingAgentless == true
   }
 
   def "specify overrides via system properties"() {
@@ -298,6 +301,7 @@ class ConfigTest extends DDSpecification {
     System.setProperty(PREFIX + PROFILING_EXCEPTION_SAMPLE_LIMIT, "811")
     System.setProperty(PREFIX + PROFILING_EXCEPTION_HISTOGRAM_TOP_ITEMS, "1121")
     System.setProperty(PREFIX + PROFILING_EXCEPTION_HISTOGRAM_MAX_COLLECTION_SIZE, "1122")
+    System.setProperty(PREFIX + PROFILING_AGENTLESS, "true")
 
     when:
     Config config = new Config()
@@ -308,7 +312,6 @@ class ConfigTest extends DDSpecification {
     config.serviceName == "something else"
     config.traceEnabled == false
     config.writerType == "LoggingWriter"
-    config.prioritizationType == "EnsureTrace"
     config.agentHost == "somehost"
     config.agentPort == 123
     config.agentUnixDomainSocket == "somepath"
@@ -360,6 +363,7 @@ class ConfigTest extends DDSpecification {
     config.profilingExceptionSampleLimit == 811
     config.profilingExceptionHistogramTopItems == 1121
     config.profilingExceptionHistogramMaxCollectionSize == 1122
+    config.profilingAgentless == true
   }
 
   def "specify overrides via env vars"() {
@@ -382,7 +386,6 @@ class ConfigTest extends DDSpecification {
     config.serviceName == "still something else"
     config.traceEnabled == false
     config.writerType == "LoggingWriter"
-    config.prioritizationType == "EnsureTrace"
     config.propagationStylesToExtract.toList() == [PropagationStyle.B3, PropagationStyle.DATADOG]
     config.propagationStylesToInject.toList() == [PropagationStyle.DATADOG, PropagationStyle.B3]
     config.jmxFetchMetricsConfigs == ["some/file"]
@@ -408,7 +411,6 @@ class ConfigTest extends DDSpecification {
     then:
     config.serviceName == "what we actually want"
     config.writerType == "DDAgentWriter"
-    config.prioritizationType == "FastLane"
     config.agentHost == "somewhere"
     config.agentPort == 123
     config.agentUrl == "http://somewhere:123"
@@ -442,7 +444,6 @@ class ConfigTest extends DDSpecification {
     config.serviceName == " "
     config.traceEnabled == true
     config.writerType == " "
-    config.prioritizationType == " "
     config.agentHost == " "
     config.agentPort == 8126
     config.agentUrl == "http:// :8126"
@@ -483,6 +484,7 @@ class ConfigTest extends DDSpecification {
     config.agentPort == expectedPort
 
     where:
+    // spotless:off
     overridePort | overrideLegacyPort | overridePortEnvVar | overrideLegacyPortEnvVar | expectedPort
     true         | true               | false              | false                    | 123
     true         | false              | false              | false                    | 123
@@ -500,6 +502,7 @@ class ConfigTest extends DDSpecification {
     true         | false              | true               | true                     | 123
     false        | true               | true               | true                     | 456 // legacy port gets picked up instead.
     false        | false              | true               | true                     | 777 // env var gets picked up instead.
+    // spotless:on
   }
 
   // FIXME: this seems to be a repeated test
@@ -540,7 +543,6 @@ class ConfigTest extends DDSpecification {
     config.serviceName == "something else"
     config.traceEnabled == false
     config.writerType == "LoggingWriter"
-    config.prioritizationType == "EnsureTrace"
     config.agentHost == "somehost"
     config.agentPort == 123
     config.agentUnixDomainSocket == "somepath"
@@ -573,7 +575,6 @@ class ConfigTest extends DDSpecification {
     then:
     config.serviceName == "unnamed-java-app"
     config.writerType == "DDAgentWriter"
-    config.prioritizationType == "FastLane"
   }
 
   def "override empty properties"() {
@@ -586,7 +587,6 @@ class ConfigTest extends DDSpecification {
     then:
     config.serviceName == "unnamed-java-app"
     config.writerType == "DDAgentWriter"
-    config.prioritizationType == "FastLane"
   }
 
   def "override non empty properties"() {
@@ -600,7 +600,6 @@ class ConfigTest extends DDSpecification {
     then:
     config.serviceName == "unnamed-java-app"
     config.writerType == "DDAgentWriter"
-    config.prioritizationType == "FastLane"
   }
 
   def "captured env props override default props"() {
@@ -676,6 +675,7 @@ class ConfigTest extends DDSpecification {
     Config.get().isIntegrationEnabled(integrationNames, defaultEnabled) == expected
 
     where:
+    // spotless:off
     names                          | defaultEnabled | expected
     []                             | true           | true
     []                             | false          | false
@@ -692,6 +692,7 @@ class ConfigTest extends DDSpecification {
     ["disabled-env", "test-env"]   | false          | true
     ["test-prop", "disabled-prop"] | true           | false
     ["disabled-env", "test-env"]   | true           | false
+    // spotless:on
 
     integrationNames = new TreeSet<>(names)
   }
@@ -710,6 +711,7 @@ class ConfigTest extends DDSpecification {
     Config.get().isRuleEnabled(name) == enabled
 
     where:
+    // spotless:off
     name            | enabled
     ""              | true
     "invalid"       | true
@@ -723,6 +725,7 @@ class ConfigTest extends DDSpecification {
     "Disabled-Prop" | false
     "disabled-env"  | false
     "Disabled-Env"  | false
+    // spotless:on
   }
 
   def "verify integration jmxfetch config"() {
@@ -739,6 +742,7 @@ class ConfigTest extends DDSpecification {
     Config.get().isJmxFetchIntegrationEnabled(integrationNames, defaultEnabled) == expected
 
     where:
+    // spotless:off
     names                          | defaultEnabled | expected
     []                             | true           | true
     []                             | false          | false
@@ -755,6 +759,7 @@ class ConfigTest extends DDSpecification {
     ["disabled-env", "test-env"]   | false          | true
     ["test-prop", "disabled-prop"] | true           | false
     ["disabled-env", "test-env"]   | true           | false
+    // spotless:on
 
     integrationNames = new TreeSet<>(names)
   }
@@ -779,6 +784,7 @@ class ConfigTest extends DDSpecification {
     Config.get().isTraceAnalyticsIntegrationEnabled(integrationNames, defaultEnabled) == expected
 
     where:
+    // spotless:off
     names                           | defaultEnabled | expected
     []                              | true           | true
     []                              | false          | false
@@ -799,6 +805,7 @@ class ConfigTest extends DDSpecification {
     ["disabled-env", "alias-env"]   | false          | true
     ["alias-prop", "disabled-prop"] | true           | false
     ["disabled-env", "alias-env"]   | true           | false
+    // spotless:on
 
     integrationNames = new TreeSet<>(names)
   }
@@ -820,6 +827,7 @@ class ConfigTest extends DDSpecification {
 
     where:
     name              | expected
+    // spotless:off
     "env.zero.test"   | 0.0
     "prop.zero.test"  | 0
     "env.float.test"  | 1.0
@@ -828,6 +836,7 @@ class ConfigTest extends DDSpecification {
     "negative.test"   | -1.0
     "garbage.test"    | 10.0
     "default.test"    | 10.0
+    // spotless:on
 
     defaultValue = 10.0
   }
@@ -848,6 +857,7 @@ class ConfigTest extends DDSpecification {
     Config.get().configProvider.getDouble(name, defaultValue) == (double) expected
 
     where:
+    // spotless:off
     name              | expected
     "env.zero.test"   | 0.0
     "prop.zero.test"  | 0
@@ -857,6 +867,7 @@ class ConfigTest extends DDSpecification {
     "negative.test"   | -1.0
     "garbage.test"    | 10.0
     "default.test"    | 10.0
+    // spotless:on
 
     defaultValue = 10.0
   }
@@ -884,6 +895,7 @@ class ConfigTest extends DDSpecification {
     propConfig.headerTags == map
 
     where:
+    // spotless:off
     mapString                                                     | map
     "a:1, a:2, a:3"                                               | [a: "3"]
     "a:b,c:d,e:"                                                  | [a: "b", c: "d"]
@@ -912,6 +924,7 @@ class ConfigTest extends DDSpecification {
     "!a"                                                          | [:]
     // ambiguous - is properties are space separated they must be trimmed
     "key1 :value1  \t key2:  value2"                              | [:]
+    // spotless:on
   }
 
   def "verify integer range configs on tracer"() {
@@ -941,6 +954,7 @@ class ConfigTest extends DDSpecification {
 
     where:
     value               | expected // null means default value
+    // spotless:off
     "1"                 | null
     "a"                 | null
     ""                  | null
@@ -951,6 +965,7 @@ class ConfigTest extends DDSpecification {
     "999-888"           | 888..999
     "400-403,405-407"   | [400, 401, 402, 403, 405, 406, 407]
     " 400 - 403 , 405 " | [400, 401, 402, 403, 405]
+    // spotless:on
   }
 
   def "verify null value mapping configs on tracer"() {
@@ -969,8 +984,10 @@ class ConfigTest extends DDSpecification {
 
     where:
     mapString | map
+    // spotless:off
     null      | [:]
     ""        | [:]
+    // spotless:on
   }
 
   def "verify empty value list configs on tracer"() {
@@ -984,8 +1001,10 @@ class ConfigTest extends DDSpecification {
     config.jmxFetchMetricsConfigs == list
 
     where:
+    // spotless:off
     listString | list
     ""         | []
+    // spotless:on
   }
 
   def "verify hostname not added to root span tags by default"() {
@@ -1090,6 +1109,7 @@ class ConfigTest extends DDSpecification {
     value == expected
 
     where:
+    // spotless:off
     services                | expected
     ["foo"]                 | 0.5f
     ["baz"]                 | 0.7f
@@ -1104,6 +1124,7 @@ class ConfigTest extends DDSpecification {
     ["baz", "foo"]          | 0.7f
     ["alias-env", "baz"]    | 0.4f
     ["alias-prop", "foo"]   | 0.2f
+    // spotless:on
   }
 
   def "verify api key loaded from file: #path"() {
@@ -1118,9 +1139,11 @@ class ConfigTest extends DDSpecification {
     config.apiKey == expectedKey
 
     where:
+    // spotless:off
     path                                                        | expectedKey
     getClass().getClassLoader().getResource("apikey").getFile() | "test-api-key"
     "/path/that/doesnt/exist"                                   | "default-api-key"
+    // spotless:on
   }
 
   def "verify api key loaded from old option name"() {
@@ -1146,9 +1169,11 @@ class ConfigTest extends DDSpecification {
     config.apiKey == expectedKey
 
     where:
+    // spotless:off
     path                                                            | expectedKey
     getClass().getClassLoader().getResource("apikey.old").getFile() | "test-api-key-old"
     "/path/that/doesnt/exist"                                       | "default-api-key"
+    // spotless:on
   }
 
   def "verify api key loaded from very old option name"() {
@@ -1212,21 +1237,21 @@ class ConfigTest extends DDSpecification {
     prop.setProperty(JMX_TAGS, "d:4")
     prop.setProperty(HEADER_TAGS, "e:5")
     prop.setProperty(PROFILING_TAGS, "f:6")
-    prop.setProperty(Config.ENV, "eu-east")
-    prop.setProperty(Config.VERSION, "43")
+    prop.setProperty(ENV, "eu-east")
+    prop.setProperty(VERSION, "43")
 
     when:
     Config config = Config.get(prop)
 
     then:
-    config.mergedSpanTags == [a: "1", b: "2", c: "3", (Config.ENV): "eu-east", (Config.VERSION): "43"]
-    config.mergedJmxTags == [a               : "1", b: "2", d: "4", (Config.ENV): "eu-east", (Config.VERSION): "43",
-                             (RUNTIME_ID_TAG): config.getRuntimeId(), (SERVICE_TAG): config.serviceName]
+    config.mergedSpanTags == [a: "1", b: "2", c: "3", (ENV): "eu-east", (VERSION): "43"]
+    config.mergedJmxTags == [a               : "1", b: "2", d: "4", (ENV): "eu-east", (VERSION): "43",
+      (RUNTIME_ID_TAG): config.getRuntimeId(), (SERVICE_TAG): config.serviceName]
     config.headerTags == [e: "5"]
 
-    config.mergedProfilingTags == [a            : "1", b: "2", f: "6", (Config.ENV): "eu-east", (Config.VERSION): "43",
-                                   (HOST_TAG)   : config.getHostName(), (RUNTIME_ID_TAG): config.getRuntimeId(),
-                                   (SERVICE_TAG): config.serviceName, (LANGUAGE_TAG_KEY): LANGUAGE_TAG_VALUE]
+    config.mergedProfilingTags == [a            : "1", b: "2", f: "6", (ENV): "eu-east", (VERSION): "43",
+      (HOST_TAG)   : config.getHostName(), (RUNTIME_ID_TAG): config.getRuntimeId(),
+      (SERVICE_TAG): config.serviceName, (LANGUAGE_TAG_KEY): LANGUAGE_TAG_VALUE]
   }
 
   def "verify dd.tags overrides global tags in system properties"() {
@@ -1295,11 +1320,11 @@ class ConfigTest extends DDSpecification {
     config.profilingProxyPassword == "test-secret-proxy-password"
   }
 
-  def "custom datadog site with API key"() {
+  def "custom datadog site with agentless profiling"() {
     setup:
     def prop = new Properties()
     prop.setProperty(SITE, "some.new.site")
-    prop.setProperty(API_KEY, "feedbeef")
+    prop.setProperty(PROFILING_AGENTLESS, "true")
 
     when:
     Config config = Config.get(prop)
@@ -1308,7 +1333,7 @@ class ConfigTest extends DDSpecification {
     config.getFinalProfilingUrl() == "https://intake.profile.some.new.site/v1/input"
   }
 
-  def "custom datadog site without API key"() {
+  def "custom datadog site without agentless profiling"() {
     setup:
     def prop = new Properties()
     prop.setProperty(SITE, "some.new.site")
@@ -1320,6 +1345,17 @@ class ConfigTest extends DDSpecification {
     config.getFinalProfilingUrl() == "http://" + config.getAgentHost() + ":" + config.getAgentPort() + "/profiling/v1/input"
   }
 
+  def "presence of api key does not lead to agentless profiling"() {
+    setup:
+    def prop = new Properties()
+    prop.setProperty(API_KEY, "some.api.key")
+
+    when:
+    Config config = Config.get(prop)
+
+    then:
+    config.getFinalProfilingUrl() == "http://" + config.getAgentHost() + ":" + config.getAgentPort() + "/profiling/v1/input"
+  }
 
   def "custom profiling url override"() {
     setup:
@@ -1413,7 +1449,7 @@ class ConfigTest extends DDSpecification {
     config.serviceName == "dd-service-env-var"
     config.mergedSpanTags == [version: "3.2.1", "service.version": "my-svc-vers", "env": "us-barista-test", other_tag: "test"]
     config.mergedJmxTags == [(RUNTIME_ID_TAG): config.getRuntimeId(), (SERVICE_TAG): 'dd-service-env-var',
-                             version         : "3.2.1", "service.version": "my-svc-vers", "env": "us-barista-test", other_tag: "test"]
+      version         : "3.2.1", "service.version": "my-svc-vers", "env": "us-barista-test", other_tag: "test"]
   }
 
   def "merge env from dd.trace.global.tags and DD_SERVICE and DD_VERSION"() {
@@ -1429,7 +1465,7 @@ class ConfigTest extends DDSpecification {
     config.serviceName == "dd-service-env-var"
     config.mergedSpanTags == [version: "3.2.1", "service.version": "my-svc-vers", "env": "us-barista-test", other_tag: "test"]
     config.mergedJmxTags == [(RUNTIME_ID_TAG): config.getRuntimeId(), (SERVICE_TAG): 'dd-service-env-var',
-                             version         : "3.2.1", "service.version": "my-svc-vers", "env": "us-barista-test", other_tag: "test"]
+      version         : "3.2.1", "service.version": "my-svc-vers", "env": "us-barista-test", other_tag: "test"]
   }
 
   def "set of dd.trace.global.tags.env exclusively by java properties and without DD_ENV"() {
@@ -1459,7 +1495,7 @@ class ConfigTest extends DDSpecification {
     System.getenv(DD_ENV_ENV) == null
     System.getenv(DD_VERSION_ENV) == null
     //actual guard:
-    config.mergedSpanTags == [(Config.VERSION): "42"]
+    config.mergedSpanTags == [(VERSION): "42"]
   }
 
   def "set of version exclusively by DD_VERSION and without DD_ENV "() {
@@ -1472,7 +1508,7 @@ class ConfigTest extends DDSpecification {
     then:
     System.getenv(DD_ENV_ENV) == null
     config.mergedSpanTags.get("env") == null
-    config.mergedSpanTags == [(Config.VERSION): "3.2.1"]
+    config.mergedSpanTags == [(VERSION): "3.2.1"]
   }
 
   // service name precedence checks
@@ -1492,7 +1528,7 @@ class ConfigTest extends DDSpecification {
     config.serviceName == DEFAULT_SERVICE_NAME
     config.mergedSpanTags == [service: 'service-tag-in-dd-trace-global-tags-java-property', 'service.version': 'my-svc-vers']
     config.mergedJmxTags == [(RUNTIME_ID_TAG) : config.getRuntimeId(), (SERVICE_TAG): config.serviceName,
-                             'service.version': 'my-svc-vers']
+      'service.version': 'my-svc-vers']
   }
 
   def "DD_SERVICE precedence over 'dd.service.name' java property is set; 'dd.service' overwrites DD_SERVICE"() {
@@ -1510,7 +1546,7 @@ class ConfigTest extends DDSpecification {
     config.serviceName == "dd-service-java-prop"
     config.mergedSpanTags == [service: 'service-tag-in-dd-trace-global-tags-java-property', 'service.version': 'my-svc-vers']
     config.mergedJmxTags == [(RUNTIME_ID_TAG) : config.getRuntimeId(), (SERVICE_TAG): config.serviceName,
-                             'service.version': 'my-svc-vers']
+      'service.version': 'my-svc-vers']
   }
 
   def "DD_SERVICE precedence over 'DD_SERVICE_NAME' environment var is set"() {
@@ -1526,7 +1562,7 @@ class ConfigTest extends DDSpecification {
     config.serviceName == "dd-service-env-var"
     config.mergedSpanTags == [service: 'service-tag-in-dd-trace-global-tags-java-property', 'service.version': 'my-svc-vers']
     config.mergedJmxTags == [(RUNTIME_ID_TAG) : config.getRuntimeId(), (SERVICE_TAG): config.serviceName,
-                             'service.version': 'my-svc-vers']
+      'service.version': 'my-svc-vers']
   }
 
   def "dd.service overwrites DD_SERVICE"() {
@@ -1542,7 +1578,7 @@ class ConfigTest extends DDSpecification {
     config.serviceName == "dd-service-java-prop"
     config.mergedSpanTags == [service: 'service-tag-in-dd-trace-global-tags-java-property', 'service.version': 'my-svc-vers']
     config.mergedJmxTags == [(RUNTIME_ID_TAG) : config.getRuntimeId(), (SERVICE_TAG): config.serviceName,
-                             'service.version': 'my-svc-vers']
+      'service.version': 'my-svc-vers']
   }
 
   def "set servicenaem by DD_SERVICE"() {
@@ -1558,7 +1594,7 @@ class ConfigTest extends DDSpecification {
     config.serviceName == "dd-service-env-var"
     config.mergedSpanTags == [service: 'service-tag-in-dd-trace-global-tags-java-property', 'service.version': 'my-svc-vers']
     config.mergedJmxTags == [(RUNTIME_ID_TAG) : config.getRuntimeId(), (SERVICE_TAG): config.serviceName,
-                             'service.version': 'my-svc-vers']
+      'service.version': 'my-svc-vers']
   }
 
   def "explicit service name is not overridden by captured environment"() {
@@ -1573,10 +1609,7 @@ class ConfigTest extends DDSpecification {
     assert config.isServiceNameSetByUser()
 
     where:
-    [serviceProperty, serviceName] << [
-      [SERVICE, SERVICE_NAME],
-      [DEFAULT_SERVICE_NAME, "my-service"]
-    ].combinations()
+    [serviceProperty, serviceName]<< [[SERVICE, SERVICE_NAME], [DEFAULT_SERVICE_NAME, "my-service"]].combinations()
   }
 
   def "detect if agent is configured using default values"() {
@@ -1618,6 +1651,7 @@ class ConfigTest extends DDSpecification {
     childConfig.isAgentConfiguredUsingDefault() == childConfiguredUsingDefault
 
     where:
+    // spotless:off
     host                              | socket    | port | legacyPort | propertyHost | propertySocket | propertyPort | configuredUsingDefault | childConfiguredUsingDefault
     null                              | null      | null | null       | null         | null           | null         | true                   | true
     "example"                         | null      | null | null       | null         | null           | null         | false                  | false
@@ -1630,6 +1664,7 @@ class ConfigTest extends DDSpecification {
     null                              | null      | null | null       | null         | "example"      | null         | true                   | false
     null                              | null      | null | null       | null         | null           | "1"          | true                   | false
     "example"                         | "example" | null | null       | "example"    | null           | null         | false                  | false
+    // spotless:on
   }
 
   // Static methods test:
@@ -1655,6 +1690,7 @@ class ConfigTest extends DDSpecification {
     ConfigConverter.valueOf(value, tClass) == expected
 
     where:
+    // spotless:off
     value       | tClass  | expected
     "42.42"     | Boolean | false
     "42.42"     | Boolean | false
@@ -1672,6 +1708,7 @@ class ConfigTest extends DDSpecification {
     "44"        | Integer | 44
     "45"        | Long    | 45
     "46"        | Short   | 46
+    // spotless:on
   }
 
   def "valueOf negative test when tClass is null"() {
@@ -1684,10 +1721,12 @@ class ConfigTest extends DDSpecification {
 
     where:
     value    | defaultValue
+    // spotless:off
     null     | "42"
     ""       | "43"
     "      " | "44"
     "1"      | "45"
+    // spotless:on
   }
 
   def "valueOf negative test"() {
@@ -1699,6 +1738,7 @@ class ConfigTest extends DDSpecification {
     println("cause: ": exception.message)
 
     where:
+    // spotless:off
     value   | tClass
     "42.42" | Number
     "42.42" | Byte
@@ -1719,6 +1759,7 @@ class ConfigTest extends DDSpecification {
     "42.42" | double
     "42.42" | float
     "42.42" | ClassThrowsExceptionForValueOfMethod // will wrapped in NumberFormatException anyway
+    // spotless:on
   }
 
   def "revert to RANDOM with invalid id generation strategy"() {
@@ -1768,6 +1809,7 @@ class ConfigTest extends DDSpecification {
     config.agentUnixDomainSocket == expectedUnixDomainSocket
 
     where:
+    // spotless:off
     configuredUrl                     | expectedUrl             | expectedHost | expectedPort | expectedUnixDomainSocket
     null                              | "http://localhost:8126" | "localhost"  | 8126         | "/path/to/socket"
     ""                                | "http://localhost:8126" | "localhost"  | 8126         | "/path/to/socket"
@@ -1781,6 +1823,7 @@ class ConfigTest extends DDSpecification {
     "unix:"                           | "http://localhost:8126" | "localhost"  | 8126         | "/path/to/socket"
     "1234"                            | "http://localhost:8126" | "localhost"  | 8126         | "/path/to/socket"
     ":1234"                           | "http://localhost:8126" | "localhost"  | 8126         | "/path/to/socket"
+    // spotless:on
   }
 
   static class ClassThrowsExceptionForValueOfMethod {

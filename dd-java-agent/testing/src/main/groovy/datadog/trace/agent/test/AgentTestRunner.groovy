@@ -17,6 +17,7 @@ import datadog.trace.core.CoreTracer
 import datadog.trace.core.DDSpan
 import datadog.trace.core.PendingTrace
 import datadog.trace.test.util.DDSpecification
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings
 import groovy.transform.stc.ClosureParams
 import groovy.transform.stc.SimpleType
 import net.bytebuddy.agent.ByteBuddyAgent
@@ -36,7 +37,7 @@ import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicInteger
 
 import static datadog.trace.agent.tooling.bytebuddy.matcher.AdditionalLibraryIgnoresMatcher.additionalLibraryIgnoresMatcher
-import static datadog.trace.api.IdGenerationStrategy.THREAD_PREFIX
+import static datadog.trace.api.IdGenerationStrategy.SEQUENTIAL
 
 /**
  * A spock test runner which automatically applies instrumentation and exposes a global trace
@@ -122,15 +123,16 @@ abstract class AgentTestRunner extends DDSpecification implements AgentBuilder.L
     TEST_WRITER = new ListWriter()
     TEST_TRACER =
       CoreTracer.builder()
-        .writer(TEST_WRITER)
-        .idGenerationStrategy(THREAD_PREFIX)
-        .statsDClient(STATS_D_CLIENT)
-        .build()
+      .writer(TEST_WRITER)
+      .idGenerationStrategy(SEQUENTIAL)
+      .statsDClient(STATS_D_CLIENT)
+      .strictTraceWrites(useStrictTraceWrites())
+      .build()
     TracerInstaller.forceInstallGlobalTracer(TEST_TRACER)
 
     assert ServiceLoader.load(Instrumenter, AgentTestRunner.getClassLoader())
-      .iterator()
-      .hasNext(): "No instrumentation found"
+    .iterator()
+    .hasNext(): "No instrumentation found"
     activeTransformer = AgentInstaller.installBytebuddyAgent(INSTRUMENTATION, true, this)
   }
 
@@ -140,6 +142,8 @@ abstract class AgentTestRunner extends DDSpecification implements AgentBuilder.L
   def setup() {
     configureLoggingLevels()
 
+    assertThreadsEachCleanup = false
+
     assert TEST_TRACER.activeSpan() == null: "Span is active before test has started: " + TEST_TRACER.activeSpan()
 
     // Config is reset before each test. Thus, configurePreAgent() has to be called before each test
@@ -147,7 +151,6 @@ abstract class AgentTestRunner extends DDSpecification implements AgentBuilder.L
     configurePreAgent()
 
     println "Starting test: ${getSpecificationContext().getCurrentIteration().getName()}"
-
     TEST_TRACER.flush()
     TEST_WRITER.start()
 
@@ -178,11 +181,15 @@ abstract class AgentTestRunner extends DDSpecification implements AgentBuilder.L
     assert TRANSFORMED_CLASSES_TYPES.findAll { additionalLibraryIgnoresMatcher().matches(it) }.isEmpty(): "Transformed classes match global libraries ignore matcher"
   }
 
+  boolean useStrictTraceWrites() {
+    return true
+  }
+
   void assertTraces(
     final int size,
     @ClosureParams(
-      value = SimpleType,
-      options = "datadog.trace.agent.test.asserts.ListWriterAssert")
+    value = SimpleType,
+    options = "datadog.trace.agent.test.asserts.ListWriterAssert")
     @DelegatesTo(value = ListWriterAssert, strategy = Closure.DELEGATE_FIRST)
     final Closure spec) {
     assertTraces(size, false, spec)
@@ -192,8 +199,8 @@ abstract class AgentTestRunner extends DDSpecification implements AgentBuilder.L
     final int size,
     final boolean ignoreAdditionalTraces,
     @ClosureParams(
-      value = SimpleType,
-      options = "datadog.trace.agent.test.asserts.ListWriterAssert")
+    value = SimpleType,
+    options = "datadog.trace.agent.test.asserts.ListWriterAssert")
     @DelegatesTo(value = ListWriterAssert, strategy = Closure.DELEGATE_FIRST)
     final Closure spec) {
     ListWriterAssert.assertTraces(TEST_WRITER, size, ignoreAdditionalTraces, spec)
@@ -214,7 +221,7 @@ abstract class AgentTestRunner extends DDSpecification implements AgentBuilder.L
       while (pendingTrace.size() < numberOfSpans) {
         if (System.currentTimeMillis() > deadline) {
           throw new TimeoutException(
-            "Timed out waiting for child spans.  Received: " + pendingTrace.size())
+          "Timed out waiting for child spans.  Received: " + pendingTrace.size())
         }
         Thread.sleep(10)
       }
@@ -235,7 +242,8 @@ abstract class AgentTestRunner extends DDSpecification implements AgentBuilder.L
     }
 
     // Incorrect* classes assert on incorrect api usage. Error expected.
-    if (typeName.startsWith('context.ContextTestInstrumentation$Incorrect') && throwable.getMessage().startsWith("Incorrect Context Api Usage detected.")) {
+    if (typeName.startsWith('context.FieldInjectionTestInstrumentation$Incorrect')
+    && throwable.getMessage().startsWith("Incorrect Context Api Usage detected.")) {
       return
     }
 
@@ -258,6 +266,7 @@ abstract class AgentTestRunner extends DDSpecification implements AgentBuilder.L
 }
 
 /** Used to signal that a transformation was intentionally aborted and is not an error. */
+@SuppressFBWarnings("RANGE_ARRAY_INDEX")
 class AbortTransformationException extends RuntimeException {
   AbortTransformationException(final String message) {
     super(message)

@@ -131,17 +131,16 @@ class SpringBootZuulTest extends HttpServerTest<ConfigurableApplicationContext> 
       operationName "servlet.forward"
       resourceName endpoint.resource("GET", address, testPathParam())
       spanType DDSpanTypes.HTTP_SERVER
-      errored endpoint.errored
+      errored false // never errored since we don't set the http status.
       childOfPrevious()
       tags {
         "$Tags.COMPONENT" "java-web-servlet-dispatcher"
         "servlet.path" endpoint.path
 
-        if (endpoint.errored) {
-          "$Tags.HTTP_STATUS" endpoint.status
-          "error.msg" { it == null || it == EXCEPTION.body }
-          "error.type" { it == null || it == Exception.name }
-          "error.stack" { it == null || it instanceof String }
+        if (endpoint.throwsException) {
+          "error.msg" EXCEPTION.body
+          "error.type" Exception.name
+          "error.stack" String
         }
         defaultTags()
       }
@@ -186,7 +185,7 @@ class SpringBootZuulTest extends HttpServerTest<ConfigurableApplicationContext> 
       tags {
         "$Tags.COMPONENT" component
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
-        "$Tags.PEER_HOST_IPV4" { it == null || it == "127.0.0.1" } // Optional
+        "$Tags.PEER_HOST_IPV4" { endpoint == ServerEndpoint.FORWARDED ? it == endpoint.body : (it == null || it == "127.0.0.1") }
         "$Tags.PEER_PORT" Integer
         "$Tags.HTTP_URL" "${endpoint.resolve(address)}"
         "$Tags.HTTP_METHOD" method

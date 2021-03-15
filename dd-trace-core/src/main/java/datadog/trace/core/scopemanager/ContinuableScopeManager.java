@@ -16,8 +16,7 @@ import datadog.trace.core.jfr.DDScopeEventFactory;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -76,18 +75,25 @@ public class ContinuableScopeManager implements AgentScopeManager {
 
   @Override
   public AgentScope activate(final AgentSpan span, final ScopeSource source) {
-    return activate(span, source, false, /* ignored */ false);
+    return activate(span, source.id(), false, /* ignored */ false);
   }
 
   @Override
   public AgentScope activate(
       final AgentSpan span, final ScopeSource source, boolean isAsyncPropagating) {
-    return activate(span, source, true, isAsyncPropagating);
+    return activate(span, source.id(), true, isAsyncPropagating);
+  }
+
+  @Override
+  public TraceScope.Continuation captureSpan(final AgentSpan span, final ScopeSource source) {
+    Continuation continuation = new SingleContinuation(this, span, source.id());
+    continuation.register();
+    return continuation;
   }
 
   private AgentScope activate(
       final AgentSpan span,
-      final ScopeSource source,
+      final byte source,
       final boolean overrideAsyncPropagation,
       final boolean isAsyncPropagating) {
     ScopeStack scopeStack = scopeStack();
@@ -115,21 +121,16 @@ public class ContinuableScopeManager implements AgentScopeManager {
   }
 
   private ContinuableScope handleSpan(
-      final Continuation continuation,
-      final AgentSpan span,
-      final ScopeSource source,
-      final boolean overrideAsyncPropagation,
-      final boolean isAsyncPropagating) {
+      final Continuation continuation, final AgentSpan span, final byte source) {
     ContinuableScope active = inheritAsyncPropagation ? scopeStack().top() : null;
-    return handleSpan(
-        active, continuation, span, source, overrideAsyncPropagation, isAsyncPropagating);
+    return handleSpan(active, continuation, span, source, true, true);
   }
 
   private ContinuableScope handleSpan(
       final ContinuableScope active,
       final Continuation continuation,
       final AgentSpan span,
-      final ScopeSource source,
+      final byte source,
       final boolean overrideAsyncPropagation,
       final boolean isAsyncPropagating) {
     // Inherit the async propagation from the active scope unless the a value is overridden
@@ -175,11 +176,11 @@ public class ContinuableScopeManager implements AgentScopeManager {
     /** Continuation that created this scope. May be null. */
     private final ContinuableScopeManager.Continuation continuation;
     /** Flag to propagate this scope across async boundaries. */
-    private volatile boolean isAsyncPropagating;
+    private boolean isAsyncPropagating;
 
-    private final ScopeSource source;
+    private final byte source;
 
-    private final AtomicInteger referenceCount = new AtomicInteger(1);
+    private short referenceCount = 1;
 
     private final DDScopeEvent event;
 
@@ -189,7 +190,7 @@ public class ContinuableScopeManager implements AgentScopeManager {
         final ContinuableScopeManager scopeManager,
         final ContinuableScopeManager.Continuation continuation,
         final AgentSpan span,
-        final ScopeSource source,
+        final byte source,
         final boolean isAsyncPropagating) {
       this.isAsyncPropagating = isAsyncPropagating;
       this.span = span;
@@ -212,7 +213,7 @@ public class ContinuableScopeManager implements AgentScopeManager {
 
         scopeManager.statsDClient.incrementCounter("scope.close.error");
 
-        if (source == ScopeSource.MANUAL) {
+        if (source == ScopeSource.MANUAL.id()) {
           scopeManager.statsDClient.incrementCounter("scope.user.close.error");
 
           if (scopeManager.strictMode) {
@@ -248,17 +249,17 @@ public class ContinuableScopeManager implements AgentScopeManager {
     }
 
     final void incrementReferences() {
-      referenceCount.incrementAndGet();
+      ++referenceCount;
     }
 
     /** Decrements ref count -- returns true if the scope is still alive */
     final boolean decrementReferences() {
-      return referenceCount.decrementAndGet() > 0;
+      return --referenceCount > 0;
     }
 
     /** Returns true if the scope is still alive (non-zero ref count) */
     final boolean alive() {
-      return referenceCount.get() > 0;
+      return referenceCount > 0;
     }
 
     @Override
@@ -283,7 +284,9 @@ public class ContinuableScopeManager implements AgentScopeManager {
      */
     @Override
     public ContinuableScopeManager.Continuation capture() {
-      return capture(false);
+      return isAsyncPropagating
+          ? new SingleContinuation(scopeManager, span, source).register()
+          : null;
     }
 
     /**
@@ -293,21 +296,9 @@ public class ContinuableScopeManager implements AgentScopeManager {
      */
     @Override
     public ContinuableScopeManager.Continuation captureConcurrent() {
-      return capture(true);
-    }
-
-    private ContinuableScopeManager.Continuation capture(boolean concurrent) {
-      if (isAsyncPropagating()) {
-        final ContinuableScopeManager.Continuation continuation;
-        if (concurrent) {
-          continuation = new ConcurrentContinuation(scopeManager, span, source);
-        } else {
-          continuation = new SingleContinuation(scopeManager, span, source);
-        }
-        return continuation.register();
-      } else {
-        return null;
-      }
+      return isAsyncPropagating
+          ? new ConcurrentContinuation(scopeManager, span, source).register()
+          : null;
     }
 
     @Override
@@ -384,18 +375,18 @@ public class ContinuableScopeManager implements AgentScopeManager {
 
     final ContinuableScopeManager scopeManager;
     final AgentSpan spanUnderScope;
-    final ScopeSource source;
+    final byte source;
     final AgentTrace trace;
 
     public Continuation(
-        ContinuableScopeManager scopeManager, AgentSpan spanUnderScope, ScopeSource source) {
+        ContinuableScopeManager scopeManager, AgentSpan spanUnderScope, byte source) {
       this.scopeManager = scopeManager;
       this.spanUnderScope = spanUnderScope;
       this.source = source;
       this.trace = spanUnderScope.context().getTrace();
     }
 
-    private Continuation register() {
+    Continuation register() {
       trace.registerContinuation(this);
       return this;
     }
@@ -410,33 +401,31 @@ public class ContinuableScopeManager implements AgentScopeManager {
    * references (using too much memory).
    */
   private static final class SingleContinuation extends Continuation {
-    private final AtomicBoolean used = new AtomicBoolean(false);
+    private static final AtomicIntegerFieldUpdater<SingleContinuation> USED =
+        AtomicIntegerFieldUpdater.newUpdater(SingleContinuation.class, "used");
+    private volatile int used = 0;
 
     private SingleContinuation(
         final ContinuableScopeManager scopeManager,
         final AgentSpan spanUnderScope,
-        final ScopeSource source) {
+        final byte source) {
       super(scopeManager, spanUnderScope, source);
     }
 
     @Override
     public AgentScope activate() {
-      final boolean overrideAsyncPropagation = true;
-      final boolean isAsyncPropagating = DEFAULT_ASYNC_PROPAGATING;
-      if (used.compareAndSet(false, true)) {
-        return scopeManager.handleSpan(
-            this, spanUnderScope, source, overrideAsyncPropagation, isAsyncPropagating);
+      if (USED.compareAndSet(this, 0, 1)) {
+        return scopeManager.handleSpan(this, spanUnderScope, source);
       } else {
         log.debug(
             "Failed to activate continuation. Reusing a continuation not allowed. Spans may be reported separately.");
-        return scopeManager.handleSpan(
-            null, spanUnderScope, source, overrideAsyncPropagation, isAsyncPropagating);
+        return scopeManager.handleSpan(null, spanUnderScope, source);
       }
     }
 
     @Override
     public void cancel() {
-      if (used.compareAndSet(false, true)) {
+      if (USED.compareAndSet(this, 0, 1)) {
         trace.cancelContinuation(this);
       } else {
         log.debug("Failed to close continuation {}. Already used.", this);
@@ -472,36 +461,39 @@ public class ContinuableScopeManager implements AgentScopeManager {
     private static final int CLOSED = Integer.MIN_VALUE >> 1;
     private static final int BARRIER = Integer.MIN_VALUE >> 2;
 
-    private final AtomicInteger count = new AtomicInteger(START);
+    private volatile int count = START;
+
+    private static final AtomicIntegerFieldUpdater<ConcurrentContinuation> COUNT =
+        AtomicIntegerFieldUpdater.newUpdater(ConcurrentContinuation.class, "count");
 
     private ConcurrentContinuation(
         final ContinuableScopeManager scopeManager,
         final AgentSpan spanUnderScope,
-        final ScopeSource source) {
+        final byte source) {
       super(scopeManager, spanUnderScope, source);
     }
 
     private boolean tryActivate() {
-      int current = count.incrementAndGet();
+      int current = COUNT.incrementAndGet(this);
       if (current < START) {
-        count.decrementAndGet();
+        COUNT.decrementAndGet(this);
       }
       return current > START;
     }
 
     private boolean tryClose() {
-      int current = count.get();
+      int current = COUNT.get(this);
       if (current < BARRIER) {
         return false;
       }
       // Now decrement the counter
-      current = count.decrementAndGet();
+      current = COUNT.decrementAndGet(this);
       // Try to close this if we are between START and BARRIER
       while (current < START && current > BARRIER) {
-        if (count.compareAndSet(current, CLOSED)) {
+        if (COUNT.compareAndSet(this, current, CLOSED)) {
           return true;
         }
-        current = count.get();
+        current = COUNT.get(this);
       }
       return false;
     }
@@ -509,10 +501,7 @@ public class ContinuableScopeManager implements AgentScopeManager {
     @Override
     public AgentScope activate() {
       if (tryActivate()) {
-        final boolean overrideAsyncPropagation = true;
-        final boolean isAsyncPropagating = true;
-        return scopeManager.handleSpan(
-            this, spanUnderScope, source, overrideAsyncPropagation, isAsyncPropagating);
+        return scopeManager.handleSpan(this, spanUnderScope, source);
       } else {
         return null;
       }
@@ -533,7 +522,7 @@ public class ContinuableScopeManager implements AgentScopeManager {
 
     @Override
     public String toString() {
-      int c = count.get();
+      int c = COUNT.get(this);
       String s = c < BARRIER ? "CANCELED" : String.valueOf(c);
       return getClass().getSimpleName()
           + "@"

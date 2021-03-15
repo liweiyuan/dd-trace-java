@@ -24,7 +24,7 @@ public final class TracerConfig {
   public static final String PROXY_NO_PROXY = "proxy.no_proxy";
   public static final String PRIORITY_SAMPLING = "priority.sampling";
   public static final String PRIORITY_SAMPLING_FORCE = "priority.sampling.force";
-  public static final String TRACE_RESOLVER_ENABLED = "trace.resolver.enabled";
+  @Deprecated public static final String TRACE_RESOLVER_ENABLED = "trace.resolver.enabled";
   public static final String SERVICE_MAPPING = "service.mapping";
 
   public static final String SPAN_TAGS = "trace.span.tags";
@@ -45,10 +45,13 @@ public final class TracerConfig {
   public static final String SCOPE_INHERIT_ASYNC_PROPAGATION =
       "trace.scope.inherit.async.propagation";
   public static final String PARTIAL_FLUSH_MIN_SPANS = "trace.partial.flush.min.spans";
+  public static final String TRACE_STRICT_WRITES_ENABLED = "trace.strict.writes.enabled";
   public static final String PROPAGATION_STYLE_EXTRACT = "propagation.style.extract";
   public static final String PROPAGATION_STYLE_INJECT = "propagation.style.inject";
 
   public static final String ENABLE_TRACE_AGENT_V05 = "trace.agent.v0.5.enabled";
+
+  public static final String JMS_LEGACY_DASH_REPLACEMENT = "trace.jms.legacy.dash.replacement";
 
   private TracerConfig() {}
 }

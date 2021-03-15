@@ -4,7 +4,7 @@ import datadog.trace.api.DDSpanTypes;
 import datadog.trace.api.sampling.PrioritySampling;
 import datadog.trace.bootstrap.instrumentation.api.AgentSpan;
 import datadog.trace.bootstrap.instrumentation.api.Tags;
-import datadog.trace.bootstrap.instrumentation.api.ci.CIProviderInfo;
+import datadog.trace.bootstrap.instrumentation.ci.CIProviderInfo;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -43,6 +43,30 @@ public abstract class TestDecorator extends BaseDecorator {
     return Tags.SPAN_KIND_TEST;
   }
 
+  protected String runtimeName() {
+    return System.getProperty("java.runtime.name");
+  }
+
+  protected String runtimeVendor() {
+    return System.getProperty("java.vendor");
+  }
+
+  protected String runtimeVersion() {
+    return System.getProperty("java.version");
+  }
+
+  protected String osArch() {
+    return System.getProperty("os.arch");
+  }
+
+  protected String osPlatform() {
+    return System.getProperty("os.name");
+  }
+
+  protected String osVersion() {
+    return System.getProperty("os.version");
+  }
+
   @Override
   protected CharSequence spanType() {
     return DDSpanTypes.TEST;
@@ -54,6 +78,12 @@ public abstract class TestDecorator extends BaseDecorator {
     span.setTag(Tags.TEST_FRAMEWORK, testFramework());
     span.setTag(Tags.TEST_TYPE, testType());
     span.setSamplingPriority(PrioritySampling.SAMPLER_KEEP);
+    span.setTag(Tags.RUNTIME_NAME, runtimeName());
+    span.setTag(Tags.RUNTIME_VENDOR, runtimeVendor());
+    span.setTag(Tags.RUNTIME_VERSION, runtimeVersion());
+    span.setTag(Tags.OS_ARCHITECTURE, osArch());
+    span.setTag(Tags.OS_PLATFORM, osPlatform());
+    span.setTag(Tags.OS_VERSION, osVersion());
 
     for (final Map.Entry<String, String> ciTag : ciTags.entrySet()) {
       span.setTag(ciTag.getKey(), ciTag.getValue());
@@ -73,5 +103,14 @@ public abstract class TestDecorator extends BaseDecorator {
       }
     }
     return testNames;
+  }
+
+  public boolean isTestSpan(final AgentSpan activeSpan) {
+    if (activeSpan == null) {
+      return false;
+    }
+
+    return spanKind().equals(activeSpan.getSpanType())
+        && testType().equals(activeSpan.getTag(Tags.TEST_TYPE));
   }
 }

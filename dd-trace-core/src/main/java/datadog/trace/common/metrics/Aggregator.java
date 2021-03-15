@@ -1,42 +1,51 @@
 package datadog.trace.common.metrics;
 
+import static datadog.trace.common.metrics.Batch.REPORT;
+import static datadog.trace.common.metrics.ConflatingMetricsAggregator.POISON_PILL;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 import datadog.trace.core.util.LRUCache;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 final class Aggregator implements Runnable {
 
   private final Queue<Batch> batchPool;
   private final BlockingQueue<Batch> inbox;
   private final LRUCache<MetricKey, AggregateMetric> aggregates;
   private final ConcurrentHashMap<MetricKey, Batch> pending;
+  private final Set<MetricKey> commonKeys;
   private final MetricWriter writer;
   // the reporting interval controls how much history will be buffered
   // when the agent is unresponsive (only 10 pending requests will be
   // buffered by OkHttpSink)
   private final long reportingIntervalNanos;
 
-  private long wallClockTime = -1;
-
-  private long lastReportTime = -1;
+  private boolean dirty;
 
   Aggregator(
       MetricWriter writer,
       Queue<Batch> batchPool,
       BlockingQueue<Batch> inbox,
       ConcurrentHashMap<MetricKey, Batch> pending,
+      final Set<MetricKey> commonKeys,
       int maxAggregates,
       long reportingInterval,
       TimeUnit reportingIntervalTimeUnit) {
     this.writer = writer;
     this.batchPool = batchPool;
     this.inbox = inbox;
-    this.aggregates = new LRUCache<>(maxAggregates * 4 / 3, 0.75f, maxAggregates);
+    this.commonKeys = commonKeys;
+    this.aggregates =
+        new LRUCache<>(
+            new CommonKeyCleaner(commonKeys), maxAggregates * 4 / 3, 0.75f, maxAggregates);
     this.pending = pending;
     this.reportingIntervalNanos = reportingIntervalTimeUnit.toNanos(reportingInterval);
   }
@@ -50,11 +59,13 @@ final class Aggregator implements Runnable {
     Thread currentThread = Thread.currentThread();
     while (!currentThread.isInterrupted()) {
       try {
-        Batch batch = inbox.poll(100, MILLISECONDS);
-        if (batch == ConflatingMetricsAggregator.POISON_PILL) {
+        Batch batch = inbox.take();
+        if (batch == POISON_PILL) {
           report(wallClockTime());
-          return;
-        } else if (null != batch) {
+          break;
+        } else if (batch == REPORT) {
+          report(wallClockTime());
+        } else {
           MetricKey key = batch.getKey();
           // important that it is still *this* batch pending, must not remove otherwise
           pending.remove(key, batch);
@@ -64,42 +75,65 @@ final class Aggregator implements Runnable {
             aggregates.put(key, aggregate);
           }
           batch.contributeTo(aggregate);
+          dirty = true;
           // return the batch for reuse
           batchPool.offer(batch);
-          reportIfNecessary();
         }
       } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-      }
-    }
-  }
-
-  private void reportIfNecessary() {
-    if (lastReportTime == -1) {
-      lastReportTime = System.nanoTime();
-      wallClockTime = wallClockTime();
-    } else if (!aggregates.isEmpty()) {
-      long now = System.nanoTime();
-      long delta = now - lastReportTime;
-      if (delta > reportingIntervalNanos) {
-        report(wallClockTime + delta);
-        lastReportTime = now;
-        wallClockTime = wallClockTime();
+        currentThread.interrupt();
       }
     }
   }
 
   private void report(long when) {
-    writer.startBucket(aggregates.size(), when, reportingIntervalNanos);
-    for (Map.Entry<MetricKey, AggregateMetric> aggregate : aggregates.entrySet()) {
-      writer.add(aggregate.getKey(), aggregate.getValue());
-      aggregate.getValue().clear();
+    if (dirty) {
+      try {
+        expungeStaleAggregates();
+        if (!aggregates.isEmpty()) {
+          writer.startBucket(aggregates.size(), when, reportingIntervalNanos);
+          for (Map.Entry<MetricKey, AggregateMetric> aggregate : aggregates.entrySet()) {
+            writer.add(aggregate.getKey(), aggregate.getValue());
+            aggregate.getValue().clear();
+          }
+          // note that this may do IO and block
+          writer.finishBucket();
+        }
+      } catch (Throwable error) {
+        writer.reset();
+        log.debug("Error publishing metrics. Dropping payload", error);
+      }
+      dirty = false;
     }
-    // note that this may do IO and block
-    writer.finishBucket();
+  }
+
+  private void expungeStaleAggregates() {
+    Iterator<Map.Entry<MetricKey, AggregateMetric>> it = aggregates.entrySet().iterator();
+    while (it.hasNext()) {
+      Map.Entry<MetricKey, AggregateMetric> pair = it.next();
+      AggregateMetric metric = pair.getValue();
+      if (metric.getHitCount() == 0) {
+        it.remove();
+        commonKeys.remove(pair.getKey());
+      }
+    }
   }
 
   private long wallClockTime() {
     return MILLISECONDS.toNanos(System.currentTimeMillis());
+  }
+
+  private static final class CommonKeyCleaner
+      implements LRUCache.ExpiryListener<MetricKey, AggregateMetric> {
+
+    private final Set<MetricKey> commonKeys;
+
+    private CommonKeyCleaner(Set<MetricKey> commonKeys) {
+      this.commonKeys = commonKeys;
+    }
+
+    @Override
+    public void accept(Map.Entry<MetricKey, AggregateMetric> expired) {
+      commonKeys.remove(expired.getKey());
+    }
   }
 }

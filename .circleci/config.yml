@@ -35,6 +35,8 @@ save_cache_paths: &save_cache_paths
   paths:
     # Cached dependencies and wrappers for gradle
     - ~/.gradle
+    # Cached dependencies for maven
+    - ~/.m2
     # Cached launchers and compilers for sbt
     - ~/.sbt
     # Cached dependencies for sbt handled by ivy
@@ -133,6 +135,19 @@ jobs:
       - image: aerospike
         # This is used by mongodb smoke tests
       - image: mongo
+        # This is used by jdbc tests
+      - image: mysql
+        environment:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_USER: sa
+          MYSQL_PASSWORD: sa
+          MYSQL_DATABASE: jdbcUnitTest
+        # This is used by jdbc tests
+      - image: postgres
+        environment:
+          POSTGRES_USER: sa
+          POSTGRES_PASSWORD: sa
+          POSTGRES_DB: jdbcUnitTest
 
     parameters:
       testTask:
@@ -150,10 +165,10 @@ jobs:
       - run:
           name: Run Tests
           command: >-
-            GRADLE_OPTS="-Dorg.gradle.jvmargs='-Xmx2G -Xms64M -XX:ErrorFile=/tmp/hs_err_pid%p.log' -Ddatadog.forkedMaxHeapSize=1G -Ddatadog.forkedMinHeapSize=64M"
+            GRADLE_OPTS="-Dorg.gradle.jvmargs='-Xmx1940M -Xms64M -XX:ErrorFile=/tmp/hs_err_pid%p.log' -Ddatadog.forkedMaxHeapSize=512M -Ddatadog.forkedMinHeapSize=64M"
             ./gradlew <<# parameters.prefixTestTask>>testJava<</ parameters.prefixTestTask>><< parameters.testTask >>
             << pipeline.parameters.gradle_flags >>
-            --max-workers=5
+            --max-workers=6
 
       - run:
           name: Collect Reports
@@ -175,11 +190,12 @@ jobs:
     <<: *default_test_job
     docker:
       - image: *default_container
-      - image: datadog/agent:7.22.0
+      - image: datadog/agent:7.25.0
         environment:
           - DD_APM_ENABLED=true
           - DD_BIND_HOST=0.0.0.0
           - DD_API_KEY=invalid_key_but_this_is_fine
+          - DD_APM_FEATURES=client_stats
 
   check:
     <<: *defaults
@@ -273,7 +289,7 @@ workflows:
           name: test_<< matrix.testTask >>
           matrix:
             parameters:
-              testTask: [ "7", "IBM8", "ZULU8", "11", "ZULU11", "ZULU13", "15" ]
+              testTask: [ "7", "IBM8", "ZULU8","ORACLE8", "11", "ZULU11", "ZULU13", "15" ]
           filters:
             tags:
               only: /.*/

@@ -41,17 +41,13 @@ class ScalikeJDBCInstrumentationTest extends AgentTestRunner {
   private Map<String, Map<String, DataSource>> cpDatasources = new HashMap<>()
 
   def prepareConnectionPoolDatasources() {
-    String[] connectionPoolNames = [
-      "tomcat", "hikari", "c3p0",
-    ]
-    connectionPoolNames.each {
-      cpName ->
-        Map<String, DataSource> dbDSMapping = new HashMap<>()
-        jdbcUrls.each {
-          dbType, jdbcUrl ->
-            dbDSMapping.put(dbType, createDS(cpName, dbType, jdbcUrl))
-        }
-        cpDatasources.put(cpName, dbDSMapping)
+    String[] connectionPoolNames = ["tomcat", "hikari", "c3p0",]
+    connectionPoolNames.each { cpName ->
+      Map<String, DataSource> dbDSMapping = new HashMap<>()
+      jdbcUrls.each { dbType, jdbcUrl ->
+        dbDSMapping.put(dbType, createDS(cpName, dbType, jdbcUrl))
+      }
+      cpDatasources.put(cpName, dbDSMapping)
     }
   }
 
@@ -121,18 +117,17 @@ class ScalikeJDBCInstrumentationTest extends AgentTestRunner {
 
     injectSysConfig("dd.integration.jdbc-datasource.enabled", "true")
   }
-  
+
   def setupSpec() {
     prepareConnectionPoolDatasources()
   }
 
   def cleanupSpec() {
     cpDatasources.values().each {
-      it.values().each {
-        datasource ->
-          if (datasource instanceof Closeable) {
-            datasource.close()
-          }
+      it.values().each { datasource ->
+        if (datasource instanceof Closeable) {
+          datasource.close()
+        }
       }
     }
   }
@@ -151,7 +146,7 @@ class ScalikeJDBCInstrumentationTest extends AgentTestRunner {
         span {
           operationName "${driver}.query"
           serviceName driver
-          resourceName query
+          resourceName obfuscatedQuery
           spanType DDSpanTypes.SQL
           childOf span(0)
           errored false
@@ -163,6 +158,7 @@ class ScalikeJDBCInstrumentationTest extends AgentTestRunner {
             if (username != null) {
               "$Tags.DB_USER" username
             }
+            "$Tags.DB_OPERATION" "SELECT"
             defaultTags()
           }
         }
@@ -182,8 +178,8 @@ class ScalikeJDBCInstrumentationTest extends AgentTestRunner {
     }
 
     where:
-    driver  | username | query
-    "h2"    | null     | "SELECT 3"
-    "derby" | "APP"    | "SELECT 3 FROM SYSIBM.SYSDUMMY1"
+    driver  | username | query                            | obfuscatedQuery
+    "h2"    | null     | "SELECT 3"                       | "SELECT ?"
+    "derby" | "APP"    | "SELECT 3 FROM SYSIBM.SYSDUMMY1" | "SELECT ? FROM SYSIBM.SYSDUMMY1"
   }
 }

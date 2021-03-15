@@ -47,9 +47,11 @@ class AkkaActorTest extends AgentTestRunner {
     "tell"    | "Akka"  | "Howdy"          | 1
     "ask"     | "Makka" | "Hi-diddly-ho"   | 1
     "forward" | "Pakka" | "Hello"          | 1
+    "route"   | "Rakka" | "How you doin'"  | 1
     "tell"    | "Pakka" | "Howdy"          | 10
     "ask"     | "Makka" | "Hi-diddly-ho"   | 10
     "forward" | "Akka"  | "Hello"          | 10
+    "route"   | "Rakka" | "How you doin'"  | 10
   }
 
   def "actor message handling should close leaked scopes"() {

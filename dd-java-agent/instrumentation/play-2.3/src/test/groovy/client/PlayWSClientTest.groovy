@@ -13,14 +13,14 @@ import java.util.concurrent.TimeUnit
 class PlayWSClientTest extends HttpClientTest {
   @Shared
   def application = new FakeApplication(
-    new File("."),
-    FakeApplication.getClassLoader(),
-    [
-      "ws.timeout.connection": CONNECT_TIMEOUT_MS,
-      "ws.timeout.request"   : READ_TIMEOUT_MS
-    ],
-    Collections.emptyList(),
-    new GlobalSettings()
+  new File("."),
+  FakeApplication.getClassLoader(),
+  [
+    "ws.timeout.connection": CONNECT_TIMEOUT_MS,
+    "ws.timeout.request"   : READ_TIMEOUT_MS
+  ],
+  Collections.emptyList(),
+  new GlobalSettings()
   )
 
   @Shared
@@ -36,7 +36,7 @@ class PlayWSClientTest extends HttpClientTest {
   }
 
   @Override
-  int doRequest(String method, URI uri, Map<String, String> headers, Closure callback) {
+  int doRequest(String method, URI uri, Map<String, String> headers, String body, Closure callback) {
     def request = client.url(uri.toString())
     headers.entrySet().each {
       request.setHeader(it.key, it.value)

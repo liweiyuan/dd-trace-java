@@ -139,10 +139,10 @@ class OpenTelemetryTest extends AgentTestRunner {
     setup:
     def builder = tracer.spanBuilder("some name")
     if (parentId) {
-      builder.setParent(tracer.converter.toSpanContext(new ExtractedContext(DDId.ONE, DDId.from(parentId), 0, null, [:], [:])))
+      builder.setParent(tracer.converter.toSpanContext(new ExtractedContext(DDId.ONE, DDId.from(parentId), 0, null, null, null, [:], [:])))
     }
     if (linkId) {
-      builder.addLink(tracer.converter.toSpanContext(new ExtractedContext(DDId.ONE, DDId.from(linkId), 0, null, [:], [:])))
+      builder.addLink(tracer.converter.toSpanContext(new ExtractedContext(DDId.ONE, DDId.from(linkId), 0, null, null, null, [:], [:])))
     }
     def result = builder.startSpan()
 
@@ -228,7 +228,6 @@ class OpenTelemetryTest extends AgentTestRunner {
     then:
     tracer.currentSpan == null
     0 * _
-
   }
 
   def "test continuation"() {

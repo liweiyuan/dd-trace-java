@@ -2,7 +2,9 @@ package server;
 
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.ERROR;
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.EXCEPTION;
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.FORWARDED;
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.NOT_FOUND;
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.PATH_PARAM;
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.QUERY_PARAM;
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.REDIRECT;
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.SUCCESS;
@@ -34,6 +36,16 @@ public class VertxTestServer extends AbstractVerticle {
                     () ->
                         ctx.response().setStatusCode(SUCCESS.getStatus()).end(SUCCESS.getBody())));
     router
+        .route(FORWARDED.getPath())
+        .handler(
+            ctx ->
+                controller(
+                    FORWARDED,
+                    () ->
+                        ctx.response()
+                            .setStatusCode(FORWARDED.getStatus())
+                            .end(ctx.request().getHeader("x-forwarded-for"))));
+    router
         .route(QUERY_PARAM.getPath())
         .handler(
             ctx ->
@@ -43,6 +55,16 @@ public class VertxTestServer extends AbstractVerticle {
                         ctx.response()
                             .setStatusCode(QUERY_PARAM.getStatus())
                             .end(ctx.request().query())));
+    router
+        .route("/path/:id/param")
+        .handler(
+            ctx ->
+                controller(
+                    PATH_PARAM,
+                    () ->
+                        ctx.response()
+                            .setStatusCode(PATH_PARAM.getStatus())
+                            .end(ctx.request().getParam("id"))));
     router
         .route(REDIRECT.getPath())
         .handler(

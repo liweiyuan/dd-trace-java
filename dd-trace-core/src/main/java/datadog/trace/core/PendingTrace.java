@@ -6,10 +6,10 @@ import datadog.trace.bootstrap.instrumentation.api.AgentTrace;
 import datadog.trace.core.monitor.Recording;
 import datadog.trace.core.util.Clock;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 import javax.annotation.Nonnull;
 import lombok.extern.slf4j.Slf4j;
 
@@ -32,25 +32,30 @@ import lombok.extern.slf4j.Slf4j;
  * Delayed write is handled by PendingTraceBuffer. <br>
  */
 @Slf4j
-public class PendingTrace implements AgentTrace {
+public class PendingTrace implements AgentTrace, PendingTraceBuffer.Element {
 
   static class Factory {
     private final CoreTracer tracer;
     private final PendingTraceBuffer pendingTraceBuffer;
+    private final boolean strictTraceWrites;
 
-    Factory(CoreTracer tracer, PendingTraceBuffer pendingTraceBuffer) {
+    Factory(CoreTracer tracer, PendingTraceBuffer pendingTraceBuffer, boolean strictTraceWrites) {
       this.tracer = tracer;
       this.pendingTraceBuffer = pendingTraceBuffer;
+      this.strictTraceWrites = strictTraceWrites;
     }
 
     PendingTrace create(@Nonnull DDId traceId) {
-      return new PendingTrace(tracer, traceId, pendingTraceBuffer);
+      return new PendingTrace(tracer, traceId, pendingTraceBuffer, strictTraceWrites);
     }
   }
+
+  private static final List<DDSpan> EMPTY = new ArrayList<>(0);
 
   private final CoreTracer tracer;
   private final DDId traceId;
   private final PendingTraceBuffer pendingTraceBuffer;
+  private final boolean strictTraceWrites;
 
   // TODO: consider moving these time fields into DDTracer to ensure that traces have precise
   // relative time
@@ -62,15 +67,22 @@ public class PendingTrace implements AgentTrace {
   private final ConcurrentLinkedDeque<DDSpan> finishedSpans = new ConcurrentLinkedDeque<>();
 
   // We must maintain a separate count because ConcurrentLinkedDeque.size() is a linear operation.
-  private final AtomicInteger completedSpanCount = new AtomicInteger(0);
+  private volatile int completedSpanCount = 0;
+  private static final AtomicIntegerFieldUpdater<PendingTrace> COMPLETED_SPAN_COUNT =
+      AtomicIntegerFieldUpdater.newUpdater(PendingTrace.class, "completedSpanCount");
 
-  private final AtomicInteger pendingReferenceCount = new AtomicInteger(0);
+  private volatile int pendingReferenceCount = 0;
+  private static final AtomicIntegerFieldUpdater<PendingTrace> PENDING_REFERENCE_COUNT =
+      AtomicIntegerFieldUpdater.newUpdater(PendingTrace.class, "pendingReferenceCount");
 
   /**
    * During a trace there are cases where the root span must be accessed (e.g. priority sampling and
    * trace-search tags). These use cases are an obstacle to span-streaming.
    */
   private volatile DDSpan rootSpan = null;
+
+  private static final AtomicReferenceFieldUpdater<PendingTrace, DDSpan> ROOT_SPAN =
+      AtomicReferenceFieldUpdater.newUpdater(PendingTrace.class, DDSpan.class, "rootSpan");
 
   private volatile boolean rootSpanWritten = false;
 
@@ -83,10 +95,12 @@ public class PendingTrace implements AgentTrace {
   private PendingTrace(
       @Nonnull CoreTracer tracer,
       @Nonnull DDId traceId,
-      @Nonnull PendingTraceBuffer pendingTraceBuffer) {
+      @Nonnull PendingTraceBuffer pendingTraceBuffer,
+      boolean strictTraceWrites) {
     this.tracer = tracer;
     this.traceId = traceId;
     this.pendingTraceBuffer = pendingTraceBuffer;
+    this.strictTraceWrites = strictTraceWrites;
 
     startTimeNano = Clock.currentNanoTime();
     startNanoTicks = Clock.currentNanoTicks();
@@ -123,18 +137,8 @@ public class PendingTrace implements AgentTrace {
   }
 
   void registerSpan(final DDSpan span) {
-    if (null == rootSpan) {
-      synchronized (this) {
-        if (!rootSpanWritten && null == rootSpan) {
-          rootSpan = span;
-        }
-      }
-    }
-
-    final int count = pendingReferenceCount.incrementAndGet();
-    if (log.isDebugEnabled()) {
-      log.debug("t_id={} -> registered span {}. count = {}", traceId, span, count);
-    }
+    ROOT_SPAN.compareAndSet(this, null, span);
+    PENDING_REFERENCE_COUNT.incrementAndGet(this);
   }
 
   void addFinishedSpan(final DDSpan span) {
@@ -142,7 +146,7 @@ public class PendingTrace implements AgentTrace {
     // There is a benign race here where the span added above can get written out by a writer in
     // progress before the count has been incremented. It's being taken care of in the internal
     // write method.
-    completedSpanCount.incrementAndGet();
+    COMPLETED_SPAN_COUNT.incrementAndGet(this);
     decrementRefAndMaybeWrite(span == getRootSpan());
   }
 
@@ -151,7 +155,7 @@ public class PendingTrace implements AgentTrace {
   }
 
   /** @return Long.MAX_VALUE if no spans finished. */
-  long oldestFinishedTime() {
+  public long oldestFinishedTime() {
     long oldest = Long.MAX_VALUE;
     for (DDSpan span : finishedSpans) {
       oldest = Math.min(oldest, span.getStartTime() + span.getDurationNano());
@@ -165,11 +169,7 @@ public class PendingTrace implements AgentTrace {
    */
   @Override
   public void registerContinuation(final AgentScope.Continuation continuation) {
-    final int count = pendingReferenceCount.incrementAndGet();
-    if (log.isDebugEnabled()) {
-      log.debug(
-          "t_id={} -> registered continuation {} -- count = {}", traceId, continuation, count);
-    }
+    PENDING_REFERENCE_COUNT.incrementAndGet(this);
   }
 
   @Override
@@ -178,10 +178,13 @@ public class PendingTrace implements AgentTrace {
   }
 
   private void decrementRefAndMaybeWrite(boolean isRootSpan) {
-    final int count = pendingReferenceCount.decrementAndGet();
+    final int count = PENDING_REFERENCE_COUNT.decrementAndGet(this);
+    if (strictTraceWrites && count < 0) {
+      throw new IllegalStateException("Pending reference count " + count + " is negative");
+    }
     int partialFlushMinSpans = tracer.getPartialFlushMinSpans();
 
-    if (count == 0 && !rootSpanWritten) {
+    if (count == 0 && (strictTraceWrites || !rootSpanWritten)) {
       // Finished with no pending work ... write immediately
       write();
     } else if (isRootSpan) {
@@ -194,11 +197,6 @@ public class PendingTrace implements AgentTrace {
       // Late arrival span ... delay write
       pendingTraceBuffer.enqueue(this);
     }
-
-    if (log.isDebugEnabled()) {
-      log.debug(
-          "t_id={} -> expired reference. root={} pending count={}", traceId, isRootSpan, count);
-    }
   }
 
   /** Important to note: may be called multiple times. */
@@ -210,17 +208,15 @@ public class PendingTrace implements AgentTrace {
   }
 
   /** Important to note: may be called multiple times. */
-  void write() {
-    int size = write(false);
-    if (log.isDebugEnabled()) {
-      log.debug("t_id={} -> wrote {} spans to {}.", traceId, size, tracer.writer);
-    }
+  public void write() {
+    write(false);
   }
 
   private int write(boolean isPartial) {
     if (!finishedSpans.isEmpty()) {
       try (Recording recording = tracer.writeTimer()) {
         // Only one writer at a time
+        final List<DDSpan> trace;
         synchronized (this) {
           if (!isPartial) {
             rootSpanWritten = true;
@@ -233,19 +229,20 @@ public class PendingTrace implements AgentTrace {
           // count(s) will be incremented, and any new spans added during the period that the count
           // was negative will be written by someone even if we don't write them right now.
           if (size > 0 && (!isPartial || size > tracer.getPartialFlushMinSpans())) {
-            List<DDSpan> trace = new ArrayList<>(size);
-            final Iterator<DDSpan> it = finishedSpans.iterator();
-            int i = 0;
-            while (it.hasNext()) {
-              final DDSpan span = it.next();
+            trace = new ArrayList<>(size);
+            DDSpan span = finishedSpans.pollFirst();
+            while (null != span) {
               trace.add(span);
-              completedSpanCount.decrementAndGet();
-              it.remove();
-              i++;
+              span = finishedSpans.pollFirst();
             }
-            tracer.write(trace);
-            return i;
+          } else {
+            trace = EMPTY;
           }
+        }
+        if (!trace.isEmpty()) {
+          COMPLETED_SPAN_COUNT.addAndGet(this, -trace.size());
+          tracer.write(trace);
+          return trace.size();
         }
       }
     }
@@ -253,6 +250,6 @@ public class PendingTrace implements AgentTrace {
   }
 
   public int size() {
-    return completedSpanCount.get();
+    return completedSpanCount;
   }
 }

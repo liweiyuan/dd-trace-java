@@ -1,4 +1,5 @@
 import datadog.trace.agent.test.AgentTestRunner
+import datadog.trace.api.DDId
 import datadog.trace.api.DDSpanTypes
 import datadog.trace.bootstrap.instrumentation.api.AgentPropagation
 import datadog.trace.bootstrap.instrumentation.api.Tags
@@ -24,24 +25,30 @@ import static datadog.trace.agent.test.utils.TraceUtils.runUnderTrace
 
 class GrpcTest extends AgentTestRunner {
 
+  @Override
+  protected void configurePreAgent() {
+    super.configurePreAgent()
+    injectSysConfig("dd.trace.grpc.ignored.outbound.methods", "example.Greeter/Ignore")
+  }
+
   def "test request-response"() {
     setup:
     ExecutorService responseExecutor = Executors.newSingleThreadExecutor()
     BindableService greeter = new GreeterGrpc.GreeterImplBase() {
-      @Override
-      void sayHello(
-        final Helloworld.Request req, final StreamObserver<Helloworld.Response> responseObserver) {
-        final Helloworld.Response reply = Helloworld.Response.newBuilder().setMessage("Hello $req.name").build()
-        responseExecutor.execute {
-          if (TEST_TRACER.activeSpan() == null) {
-            responseObserver.onError(new IllegalStateException("no active span"))
-          } else {
-            responseObserver.onNext(reply)
-            responseObserver.onCompleted()
+        @Override
+        void sayHello(
+          final Helloworld.Request req, final StreamObserver<Helloworld.Response> responseObserver) {
+          final Helloworld.Response reply = Helloworld.Response.newBuilder().setMessage("Hello $req.name").build()
+          responseExecutor.execute {
+            if (TEST_TRACER.activeSpan() == null) {
+              responseObserver.onError(new IllegalStateException("no active span"))
+            } else {
+              responseObserver.onNext(reply)
+              responseObserver.onCompleted()
+            }
           }
         }
       }
-    }
     Server server = InProcessServerBuilder.forName(getClass().name).addService(greeter).directExecutor().build().start()
 
     ManagedChannel channel = InProcessChannelBuilder.forName(getClass().name).build()
@@ -50,7 +57,6 @@ class GrpcTest extends AgentTestRunner {
     when:
     def response = runUnderTrace("parent") {
       def resp = client.sayHello(Helloworld.Request.newBuilder().setName(name).build())
-      TEST_WRITER.waitForTraces(1) // Wait for the server span to be reported.
       return resp
     }
 
@@ -128,12 +134,12 @@ class GrpcTest extends AgentTestRunner {
     setup:
     def error = status.asException()
     BindableService greeter = new GreeterGrpc.GreeterImplBase() {
-      @Override
-      void sayHello(
-        final Helloworld.Request req, final StreamObserver<Helloworld.Response> responseObserver) {
-        responseObserver.onError(error)
+        @Override
+        void sayHello(
+          final Helloworld.Request req, final StreamObserver<Helloworld.Response> responseObserver) {
+          responseObserver.onError(error)
+        }
       }
-    }
     Server server = InProcessServerBuilder.forName(getClass().name).addService(greeter).directExecutor().build().start()
 
     ManagedChannel channel = InProcessChannelBuilder.forName(getClass().name).build()
@@ -214,12 +220,12 @@ class GrpcTest extends AgentTestRunner {
     setup:
     def error = status.asRuntimeException()
     BindableService greeter = new GreeterGrpc.GreeterImplBase() {
-      @Override
-      void sayHello(
-        final Helloworld.Request req, final StreamObserver<Helloworld.Response> responseObserver) {
-        throw error
+        @Override
+        void sayHello(
+          final Helloworld.Request req, final StreamObserver<Helloworld.Response> responseObserver) {
+          throw error
+        }
       }
-    }
     Server server = InProcessServerBuilder.forName(getClass().name).addService(greeter).directExecutor().build().start()
 
     ManagedChannel channel = InProcessChannelBuilder.forName(getClass().name).build()
@@ -301,14 +307,79 @@ class GrpcTest extends AgentTestRunner {
     def keys = new ArrayList()
     GrpcExtractAdapter.GETTER.forEachKey(meta, new AgentPropagation.KeyClassifier() {
 
-      @Override
-      boolean accept(String key, String value) {
-        keys.add(key.toLowerCase())
-        return true
-      }
-    })
+        @Override
+        boolean accept(String key, String value) {
+          keys.add(key.toLowerCase())
+          return true
+        }
+      })
 
     then:
     keys == ["test"]
+  }
+
+  def "test ignore ignored methods"() {
+    setup:
+    ExecutorService responseExecutor = Executors.newSingleThreadExecutor()
+    BindableService greeter = new GreeterGrpc.GreeterImplBase() {
+        @Override
+        void ignore(
+          final Helloworld.Request req, final StreamObserver<Helloworld.Response> responseObserver) {
+          final Helloworld.Response reply = Helloworld.Response.newBuilder().setMessage("Hello $req.name").build()
+          responseExecutor.execute {
+            responseObserver.onNext(reply)
+            responseObserver.onCompleted()
+          }
+        }
+      }
+    Server server = InProcessServerBuilder.forName(getClass().name).addService(greeter).directExecutor().build().start()
+    ManagedChannel channel = InProcessChannelBuilder.forName(getClass().name).build()
+    GreeterGrpc.GreeterBlockingStub client = GreeterGrpc.newBlockingStub(channel)
+
+    when:
+    def response = runUnderTrace("parent") {
+      def resp = client.ignore(Helloworld.Request.newBuilder().setName("whatever").build())
+      return resp
+    }
+
+    then:
+    response.message == "Hello whatever"
+    assertTraces(2) {
+      trace(1) {
+        basicSpan(it, "parent")
+      }
+      trace(2) {
+        span {
+          operationName "grpc.server"
+          resourceName "example.Greeter/Ignore"
+          spanType DDSpanTypes.RPC
+          parentDDId DDId.ZERO
+          errored false
+          tags {
+            "$Tags.COMPONENT" "grpc-server"
+            "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
+            "status.code" "OK"
+            defaultTags(true)
+          }
+        }
+        span {
+          operationName "grpc.message"
+          resourceName "grpc.message"
+          spanType DDSpanTypes.RPC
+          childOf span(0)
+          errored false
+          tags {
+            "$Tags.COMPONENT" "grpc-server"
+            "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
+            "message.type" "example.Helloworld\$Request"
+            defaultTags()
+          }
+        }
+      }
+    }
+
+    cleanup:
+    channel?.shutdownNow()?.awaitTermination(10, TimeUnit.SECONDS)
+    server?.shutdownNow()?.awaitTermination()
   }
 }

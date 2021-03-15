@@ -40,6 +40,7 @@ import datadog.trace.core.scopemanager.ContinuableScopeManager;
 import datadog.trace.core.taginterceptor.RuleFlags;
 import datadog.trace.core.taginterceptor.TagInterceptor;
 import datadog.trace.util.AgentTaskScheduler;
+import de.thetaphi.forbiddenapis.SuppressForbidden;
 import java.lang.ref.WeakReference;
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -53,7 +54,6 @@ import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
 import java.util.SortedSet;
 import java.util.concurrent.ConcurrentSkipListSet;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import lombok.Builder;
 import lombok.extern.slf4j.Slf4j;
@@ -75,12 +75,7 @@ public class CoreTracer implements AgentTracer.TracerAPI {
   private static final String LANG_INTERPRETER_VENDOR_STATSD_TAG = "lang_interpreter_vendor";
   private static final String TRACER_VERSION_STATSD_TAG = "tracer_version";
 
-  // FIXME: This is static instead of instance because we don't reliably close the tracer in tests.
-  private static final PendingTraceBuffer PENDING_TRACE_BUFFER = new PendingTraceBuffer();
-
-  static {
-    PENDING_TRACE_BUFFER.start();
-  }
+  private final PendingTraceBuffer pendingTraceBuffer;
 
   /** Default service name if none provided on the trace or span */
   final String serviceName;
@@ -166,6 +161,7 @@ public class CoreTracer implements AgentTracer.TracerAPI {
       serviceNameMappings(config.getServiceMapping());
       taggedHeaders(config.getHeaderTags());
       partialFlushMinSpans(config.getPartialFlushMinSpans());
+      strictTraceWrites(config.isTraceStrictWritesEnabled());
 
       return this;
     }
@@ -188,7 +184,8 @@ public class CoreTracer implements AgentTracer.TracerAPI {
       final Map<String, String> taggedHeaders,
       final int partialFlushMinSpans,
       final StatsDClient statsDClient,
-      final TagInterceptor tagInterceptor) {
+      final TagInterceptor tagInterceptor,
+      final boolean strictTraceWrites) {
 
     assert localRootSpanTags != null;
     assert defaultSpanTags != null;
@@ -240,23 +237,18 @@ public class CoreTracer implements AgentTracer.TracerAPI {
       this.writer = writer;
     }
 
-    pendingTraceFactory = new PendingTrace.Factory(this, PENDING_TRACE_BUFFER);
+    this.pendingTraceBuffer =
+        strictTraceWrites ? PendingTraceBuffer.mute() : PendingTraceBuffer.delaying();
+    pendingTraceFactory = new PendingTrace.Factory(this, pendingTraceBuffer, strictTraceWrites);
+    pendingTraceBuffer.start();
+
     this.writer.start();
 
     metricsAggregator = createMetricsAggregator(config);
-    // schedule to start after geometrically distributed number of seconds expressed in
-    // milliseconds, with p = 0.25, meaning the probability that the aggregator will not
-    // have started by the nth second is 0.25(0.75)^n-1 (or a 1% chance of not having
-    // started within 10 seconds, where a cap is applied) This avoids a fleet of traced
-    // applications starting at the same time and sending metrics in sync
-    long delayMillis =
-        Math.min(
-            (long)
-                (1000D
-                    * (Math.log(ThreadLocalRandom.current().nextDouble()) / Math.log(1 - 0.25)
-                        + 1)),
-            10_000);
-    AgentTaskScheduler.INSTANCE.schedule(
+    // Schedule the metrics aggregator to begin reporting after a random delay of 1 to 10 seconds
+    // (using milliseconds granularity.) This avoids a fleet of traced applications starting at the
+    // same time from sending metrics in sync.
+    AgentTaskScheduler.INSTANCE.scheduleWithJitter(
         new AgentTaskScheduler.Task<MetricsAggregator>() {
           @Override
           public void run(MetricsAggregator target) {
@@ -264,8 +256,8 @@ public class CoreTracer implements AgentTracer.TracerAPI {
           }
         },
         metricsAggregator,
-        delayMillis,
-        TimeUnit.MILLISECONDS);
+        1,
+        TimeUnit.SECONDS);
 
     this.tagInterceptor =
         null == tagInterceptor ? new TagInterceptor(new RuleFlags(config)) : tagInterceptor;
@@ -283,7 +275,7 @@ public class CoreTracer implements AgentTracer.TracerAPI {
   }
 
   @Override
-  public void finalize() {
+  protected void finalize() {
     try {
       shutdownCallback.run();
       Runtime.getRuntime().removeShutdownHook(shutdownCallback);
@@ -292,6 +284,15 @@ public class CoreTracer implements AgentTracer.TracerAPI {
     } catch (final Exception e) {
       log.error("Error while finalizing DDTracer.", e);
     }
+  }
+
+  /**
+   * Only visible for benchmarking purposes
+   *
+   * @return a PendingTrace
+   */
+  PendingTrace createTrace(DDId id) {
+    return pendingTraceFactory.create(id);
   }
 
   public String mapServiceName(String serviceName) {
@@ -360,6 +361,11 @@ public class CoreTracer implements AgentTracer.TracerAPI {
     return scopeManager.activate(span, source, isAsyncPropagating);
   }
 
+  @Override
+  public TraceScope.Continuation captureSpan(final AgentSpan span, ScopeSource source) {
+    return scopeManager.captureSpan(span, source);
+  }
+
   public TagInterceptor getTagInterceptor() {
     return tagInterceptor;
   }
@@ -405,7 +411,7 @@ public class CoreTracer implements AgentTracer.TracerAPI {
   }
 
   @Override
-  public <C> AgentSpan.Context extract(final C carrier, final ContextVisitor<C> getter) {
+  public <C> AgentSpan.Context.Extracted extract(final C carrier, final ContextVisitor<C> getter) {
     return extractor.extract(carrier, getter);
   }
 
@@ -442,20 +448,21 @@ public class CoreTracer implements AgentTracer.TracerAPI {
     if (!writtenTrace.isEmpty()) {
       writtenTrace = traceProcessor.onTraceComplete(writtenTrace);
 
-      metricsAggregator.publish(writtenTrace);
+      boolean forceKeep = metricsAggregator.publish(writtenTrace);
 
-      final DDSpan rootSpan = writtenTrace.get(0).getLocalRootSpan();
+      DDSpan rootSpan = writtenTrace.get(0).getLocalRootSpan();
       setSamplingPriorityIfNecessary(rootSpan);
 
-      final DDSpan spanToSample = rootSpan == null ? writtenTrace.get(0) : rootSpan;
-      if (sampler.sample(spanToSample)) {
+      DDSpan spanToSample = rootSpan == null ? writtenTrace.get(0) : rootSpan;
+      spanToSample.forceKeep(forceKeep);
+      if (forceKeep || sampler.sample(spanToSample)) {
         writer.write(writtenTrace);
       } else {
         // with span streaming this won't work - it needs to be changed
         // to track an effective sampling rate instead, however, tests
         // checking that a hard reference on a continuation prevents
         // reporting fail without this, so will need to be fixed first.
-        writer.incrementTraceCount();
+        writer.incrementDropCounts(writtenTrace.size());
       }
     }
   }
@@ -506,25 +513,28 @@ public class CoreTracer implements AgentTracer.TracerAPI {
 
   @Override
   public void close() {
-    // FIXME: can't close PENDING_TRACE_BUFFER since it is a static/shared instance.
-    // PENDING_TRACE_BUFFER.close();
+    pendingTraceBuffer.close();
     writer.close();
+    statsDClient.close();
   }
 
   @Override
   public void flush() {
-    PENDING_TRACE_BUFFER.flush();
+    pendingTraceBuffer.flush();
     writer.flush();
   }
 
+  @SuppressForbidden
   private static DDScopeEventFactory createScopeEventFactory() {
-    try {
-      return (DDScopeEventFactory)
-          Class.forName("datadog.trace.core.jfr.openjdk.ScopeEventFactory").newInstance();
-    } catch (final ClassFormatError | ReflectiveOperationException | NoClassDefFoundError e) {
-      log.debug("Profiling of ScopeEvents is not available");
+    if (Config.get().isProfilingEnabled()) {
+      try {
+        return (DDScopeEventFactory)
+            Class.forName("datadog.trace.core.jfr.openjdk.ScopeEventFactory").newInstance();
+      } catch (final Throwable e) {
+        log.debug("Profiling of ScopeEvents is not available");
+      }
     }
-    return new DDNoopScopeEventFactory();
+    return DDNoopScopeEventFactory.INSTANCE;
   }
 
   private static StatsDClient createStatsDClient(final Config config) {
@@ -768,7 +778,7 @@ public class CoreTracer implements AgentTracer.TracerAPI {
 
         rootSpanTags = localRootSpanTags;
 
-        parentTrace = pendingTraceFactory.create(traceId);
+        parentTrace = createTrace(traceId);
       }
 
       if (serviceName == null) {

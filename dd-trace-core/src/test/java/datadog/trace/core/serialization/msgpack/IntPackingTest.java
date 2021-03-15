@@ -3,9 +3,10 @@ package datadog.trace.core.serialization.msgpack;
 import static org.junit.Assert.assertEquals;
 
 import datadog.trace.core.serialization.ByteBufferConsumer;
-import datadog.trace.core.serialization.EncodingCachingStrategies;
+import datadog.trace.core.serialization.FlushingBuffer;
 import datadog.trace.core.serialization.Mapper;
 import datadog.trace.core.serialization.MessageFormatter;
+import datadog.trace.core.serialization.StreamingBuffer;
 import datadog.trace.core.serialization.Writable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -100,29 +101,29 @@ public class IntPackingTest {
     ByteBuffer buffer = ByteBuffer.allocate(input.length * 9 + 10);
     MessageFormatter messageFormatter =
         new MsgPackWriter(
-            new ByteBufferConsumer() {
-              @Override
-              public void accept(int messageCount, ByteBuffer buffy) {
-                try {
-                  MessageUnpacker unpacker = MessagePack.newDefaultUnpacker(buffy);
-                  assertEquals(1, unpacker.unpackArrayHeader());
-                  assertEquals(1, messageCount);
-                  assertEquals(input.length, unpacker.unpackArrayHeader());
-                  for (long i : input) {
-                    assertEquals(i, unpacker.unpackLong());
+            newBuffer(
+                input.length * 9 + 10,
+                new ByteBufferConsumer() {
+                  @Override
+                  public void accept(int messageCount, ByteBuffer buffy) {
+                    try {
+                      MessageUnpacker unpacker = MessagePack.newDefaultUnpacker(buffy);
+                      assertEquals(1, messageCount);
+                      assertEquals(input.length, unpacker.unpackArrayHeader());
+                      for (long i : input) {
+                        assertEquals(i, unpacker.unpackLong());
+                      }
+                    } catch (IOException e) {
+                      Assert.fail(e.getMessage());
+                    }
                   }
-                } catch (IOException e) {
-                  Assert.fail(e.getMessage());
-                }
-              }
-            },
-            buffer);
+                }));
     messageFormatter.format(
         input,
         new Mapper<long[]>() {
           @Override
           public void map(long[] x, Writable w) {
-            w.writeObject(x, EncodingCachingStrategies.NO_CACHING);
+            w.writeObject(x, null);
           }
         });
     messageFormatter.flush();
@@ -134,33 +135,32 @@ public class IntPackingTest {
     for (int i = 0; i < input.length; ++i) {
       asInts[i] = (int) input[i];
     }
-    ByteBuffer buffer = ByteBuffer.allocate(input.length * 5 + 10);
     MessageFormatter messageFormatter =
         new MsgPackWriter(
-            new ByteBufferConsumer() {
-              @Override
-              public void accept(int messageCount, ByteBuffer buffy) {
-                try {
-                  MessageUnpacker unpacker = MessagePack.newDefaultUnpacker(buffy);
-                  assertEquals(1, unpacker.unpackArrayHeader());
-                  assertEquals(1, messageCount);
-                  assertEquals(asInts.length, unpacker.unpackArrayHeader());
-                  for (int i : asInts) {
-                    assertEquals(i, unpacker.unpackInt());
+            newBuffer(
+                input.length * 5 + 10,
+                new ByteBufferConsumer() {
+                  @Override
+                  public void accept(int messageCount, ByteBuffer buffy) {
+                    try {
+                      MessageUnpacker unpacker = MessagePack.newDefaultUnpacker(buffy);
+                      assertEquals(1, messageCount);
+                      assertEquals(asInts.length, unpacker.unpackArrayHeader());
+                      for (int i : asInts) {
+                        assertEquals(i, unpacker.unpackInt());
+                      }
+                    } catch (IOException e) {
+                      Assert.fail(e.getMessage());
+                    }
                   }
-                } catch (IOException e) {
-                  Assert.fail(e.getMessage());
-                }
-              }
-            },
-            buffer);
+                }));
 
     messageFormatter.format(
         asInts,
         new Mapper<int[]>() {
           @Override
           public void map(int[] x, Writable w) {
-            w.writeObject(x, EncodingCachingStrategies.NO_CACHING);
+            w.writeObject(x, null);
           }
         });
     messageFormatter.flush();
@@ -174,5 +174,9 @@ public class IntPackingTest {
       random[i] = signum * ThreadLocalRandom.current().nextLong(0, Long.MAX_VALUE);
     }
     return random;
+  }
+
+  private StreamingBuffer newBuffer(int capacity, ByteBufferConsumer consumer) {
+    return new FlushingBuffer(capacity, consumer);
   }
 }

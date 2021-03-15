@@ -10,12 +10,14 @@ import static net.bytebuddy.matcher.ElementMatchers.not;
 
 import datadog.trace.agent.tooling.bytebuddy.DDTransformers;
 import datadog.trace.agent.tooling.bytebuddy.ExceptionHandlers;
+import datadog.trace.agent.tooling.context.FieldBackedContextProvider;
 import datadog.trace.agent.tooling.context.FieldBackedProvider;
 import datadog.trace.agent.tooling.context.InstrumentationContextProvider;
 import datadog.trace.agent.tooling.context.NoopContextProvider;
 import datadog.trace.agent.tooling.muzzle.Reference;
 import datadog.trace.agent.tooling.muzzle.ReferenceMatcher;
 import datadog.trace.api.Config;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.security.ProtectionDomain;
 import java.util.Arrays;
 import java.util.Collections;
@@ -74,6 +76,7 @@ public interface Instrumenter {
   boolean isApplicable(Set<TargetSystem> enabledSystems);
 
   @Slf4j
+  @SuppressFBWarnings("IS2_INCONSISTENT_SYNC")
   abstract class Default implements Instrumenter {
     private static final ElementMatcher<ClassLoader> ANY_CLASS_LOADER = any();
 
@@ -124,7 +127,11 @@ public interface Instrumenter {
             }
           }
           if (!contextStores.isEmpty()) {
-            contextProvider = new FieldBackedProvider(this, contextStores);
+            if (Config.get().isLegacyContextFieldInjection()) {
+              contextProvider = new FieldBackedProvider(this, contextStores);
+            } else {
+              contextProvider = new FieldBackedContextProvider(this, contextStores);
+            }
           } else {
             contextProvider = NoopContextProvider.INSTANCE;
           }
@@ -135,7 +142,7 @@ public interface Instrumenter {
 
     @Override
     public final AgentBuilder instrument(final AgentBuilder parentAgentBuilder) {
-      if (!enabled) {
+      if (!isEnabled()) {
         log.debug("Instrumentation {} is disabled", this);
         return parentAgentBuilder;
       }

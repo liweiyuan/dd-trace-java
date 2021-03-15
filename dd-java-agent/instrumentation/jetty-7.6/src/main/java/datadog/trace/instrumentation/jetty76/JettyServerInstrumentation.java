@@ -14,9 +14,7 @@ import static net.bytebuddy.matcher.ElementMatchers.takesNoArguments;
 
 import com.google.auto.service.AutoService;
 import datadog.trace.agent.tooling.Instrumenter;
-import datadog.trace.api.Config;
 import datadog.trace.api.CorrelationIdentifier;
-import datadog.trace.api.DDTags;
 import datadog.trace.api.GlobalTracer;
 import datadog.trace.bootstrap.InstrumentationContext;
 import datadog.trace.bootstrap.instrumentation.api.AgentScope;
@@ -108,12 +106,11 @@ public final class JettyServerInstrumentation extends Instrumenter.Tracing {
         return activateSpan((AgentSpan) existingSpan);
       }
 
-      final AgentSpan.Context extractedContext = propagate().extract(req, GETTER);
+      final AgentSpan.Context.Extracted extractedContext = propagate().extract(req, GETTER);
 
       final AgentSpan span = startSpan(SERVLET_REQUEST, extractedContext).setMeasured(true);
       DECORATE.afterStart(span);
-      DECORATE.onConnection(span, req);
-      DECORATE.onRequest(span, req);
+      DECORATE.onRequest(span, req, req, extractedContext);
 
       final AgentScope scope = activateSpan(span);
       scope.setAsyncPropagation(true);
@@ -136,18 +133,12 @@ public final class JettyServerInstrumentation extends Instrumenter.Tracing {
    */
   public static class ResetAdvice {
     @Advice.OnMethodEnter(suppress = Throwable.class)
-    public static void stopSpan(@Advice.This final AbstractHttpConnection channel) {
-      Request req = channel.getRequest();
-      Response resp = channel.getResponse();
-
+    public static void stopSpan(@Advice.This final AbstractHttpConnection connection) {
+      Request req = connection.getRequest();
       Object spanObj = req.getAttribute(DD_SPAN_ATTRIBUTE);
       if (spanObj instanceof AgentSpan) {
         final AgentSpan span = (AgentSpan) spanObj;
-
-        if (Config.get().isServletPrincipalEnabled() && req.getUserPrincipal() != null) {
-          span.setTag(DDTags.USER_NAME, req.getUserPrincipal().getName());
-        }
-        DECORATE.onResponse(span, resp);
+        DECORATE.onResponse(span, connection);
         DECORATE.beforeFinish(span);
         span.finish();
       }

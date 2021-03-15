@@ -1,7 +1,6 @@
 package datadog.trace.instrumentation.springwebflux.client;
 
 import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.activateSpan;
-import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.activeSpan;
 import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.startSpan;
 import static datadog.trace.instrumentation.springwebflux.client.SpringWebfluxHttpClientDecorator.DECORATE;
 import static datadog.trace.instrumentation.springwebflux.client.SpringWebfluxHttpClientDecorator.HTTP_REQUEST;
@@ -21,12 +20,17 @@ import reactor.core.publisher.Mono;
  * https://github.com/spring-cloud/spring-cloud-sleuth/blob/master/spring-cloud-sleuth-core/src/main/java/org/springframework/cloud/sleuth/instrument/web/client/TraceWebClientBeanPostProcessor.java
  */
 public class WebClientTracingFilter implements ExchangeFilterFunction {
+  private static final WebClientTracingFilter INSTANCE = new WebClientTracingFilter();
+
+  /**
+   * It's not expected that this method would be called concurrently. This should only be created
+   * during the start-up and configuration phase of an app. If a builder is being modified on
+   * multiple threads it would exhibit ConcurrentModificationException even without the agent
+   */
   public static void addFilter(final List<ExchangeFilterFunction> exchangeFilterFunctions) {
-    // Since the builder where we instrument the build function can be reused, we need
-    // to only add the filter once
-    exchangeFilterFunctions.removeIf(
-        filterFunction -> filterFunction instanceof WebClientTracingFilter);
-    exchangeFilterFunctions.add(0, new WebClientTracingFilter());
+    // Since the builder we instrument the can be reused, we need to only add the filter once
+    exchangeFilterFunctions.removeIf(filterFunction -> filterFunction == INSTANCE);
+    exchangeFilterFunctions.add(0, INSTANCE);
   }
 
   @Override
@@ -45,24 +49,12 @@ public class WebClientTracingFilter implements ExchangeFilterFunction {
 
     @Override
     public void subscribe(final CoreSubscriber<? super ClientResponse> subscriber) {
-      final AgentSpan span;
-      if (activeSpan() != null) {
-        span = startSpan(HTTP_REQUEST, activeSpan().context());
-      } else {
-        span = startSpan(HTTP_REQUEST);
-      }
+      AgentSpan span = startSpan(HTTP_REQUEST);
       DECORATE.afterStart(span);
       DECORATE.onRequest(span, request);
-      final ClientRequest.Builder builder = ClientRequest.from(request);
       try (final AgentScope scope = activateSpan(span)) {
-        scope.setAsyncPropagation(true);
-        next.exchange(builder.build())
-            .doOnCancel(
-                () -> {
-                  DECORATE.onCancel(span);
-                  span.finish();
-                })
-            .subscribe(new TraceWebClientSubscriber(subscriber, span));
+        TraceWebClientSubscriber tracingSubscriber = new TraceWebClientSubscriber(subscriber, span);
+        next.exchange(request).doOnCancel(tracingSubscriber::onCancel).subscribe(tracingSubscriber);
       }
     }
   }

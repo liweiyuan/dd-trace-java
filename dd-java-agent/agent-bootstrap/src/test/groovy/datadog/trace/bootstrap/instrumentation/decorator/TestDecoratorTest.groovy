@@ -3,7 +3,8 @@ package datadog.trace.bootstrap.instrumentation.decorator
 import datadog.trace.api.sampling.PrioritySampling
 import datadog.trace.bootstrap.instrumentation.api.AgentSpan
 import datadog.trace.bootstrap.instrumentation.api.Tags
-import datadog.trace.bootstrap.instrumentation.api.ci.CIProviderInfo
+import datadog.trace.bootstrap.instrumentation.ci.CIProviderInfo
+import datadog.trace.bootstrap.instrumentation.ci.git.GitInfo
 
 class TestDecoratorTest extends BaseDecoratorTest {
 
@@ -23,6 +24,12 @@ class TestDecoratorTest extends BaseDecoratorTest {
     1 * span.setTag(Tags.TEST_FRAMEWORK, decorator.testFramework())
     1 * span.setTag(Tags.TEST_TYPE, decorator.testType())
     1 * span.setSamplingPriority(PrioritySampling.SAMPLER_KEEP)
+    1 * span.setTag(Tags.RUNTIME_NAME, decorator.runtimeName())
+    1 * span.setTag(Tags.RUNTIME_VENDOR, decorator.runtimeVendor())
+    1 * span.setTag(Tags.RUNTIME_VERSION, decorator.runtimeVersion())
+    1 * span.setTag(Tags.OS_ARCHITECTURE, decorator.osArch())
+    1 * span.setTag(Tags.OS_PLATFORM, decorator.osPlatform())
+    1 * span.setTag(Tags.OS_VERSION, decorator.osVersion())
     decorator.ciTags.each {
       1 * span.setTag(it.key, it.value)
     }
@@ -46,41 +53,52 @@ class TestDecoratorTest extends BaseDecoratorTest {
   @Override
   def newDecorator() {
     return new TestDecorator(newMockCiInfo()) {
-      @Override
-      protected String testFramework() {
-        return "test-framework"
-      }
+        @Override
+        protected String testFramework() {
+          return "test-framework"
+        }
 
-      @Override
-      protected String[] instrumentationNames() {
-        return ["test1", "test2"]
-      }
+        @Override
+        protected String[] instrumentationNames() {
+          return ["test1", "test2"]
+        }
 
-      @Override
-      protected CharSequence spanType() {
-        return "test-type"
-      }
+        @Override
+        protected CharSequence spanType() {
+          return "test-type"
+        }
 
-      @Override
-      protected String spanKind() {
-        return "test-type"
-      }
+        @Override
+        protected String spanKind() {
+          return "test-type"
+        }
 
-      @Override
-      protected CharSequence component() {
-        return "test-component"
+        @Override
+        protected CharSequence component() {
+          return "test-component"
+        }
       }
-    }
   }
 
   def newMockCiInfo() {
     return new CIProviderInfo() {
-      @Override
-      Map<String, String> getCiTags() {
-        def mockCiTags = new HashMap()
-        mockCiTags.put("sample-ci-key", "sample-ci-value")
-        return mockCiTags
+
+        @Override
+        protected GitInfo buildCIGitInfo() {
+          return GitInfo.NOOP
+        }
+
+        @Override
+        protected CIProviderInfo.CIInfo buildCIInfo() {
+          return CIProviderInfo.CIInfo.NOOP
+        }
+
+        @Override
+        Map<String, String> getCiTags() {
+          def mockCiTags = new HashMap()
+          mockCiTags.put("sample-ci-key", "sample-ci-value")
+          return mockCiTags
+        }
       }
-    }
   }
 }

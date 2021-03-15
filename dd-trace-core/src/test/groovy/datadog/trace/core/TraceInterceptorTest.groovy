@@ -5,7 +5,7 @@ import datadog.trace.api.GlobalTracer
 import datadog.trace.api.interceptor.MutableSpan
 import datadog.trace.api.interceptor.TraceInterceptor
 import datadog.trace.common.writer.ListWriter
-import datadog.trace.test.util.DDSpecification
+import datadog.trace.core.test.DDCoreSpecification
 import spock.lang.Timeout
 
 import java.util.concurrent.CountDownLatch
@@ -13,10 +13,14 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 @Timeout(10)
-class TraceInterceptorTest extends DDSpecification {
+class TraceInterceptorTest extends DDCoreSpecification {
 
   def writer = new ListWriter()
-  def tracer = CoreTracer.builder().writer(writer).build()
+  def tracer = tracerBuilder().writer(writer).build()
+
+  def cleanup() {
+    tracer?.close()
+  }
 
   def "interceptor is registered as a service"() {
     expect:
@@ -29,16 +33,16 @@ class TraceInterceptorTest extends DDSpecification {
     int priority = 999
     ((TestInterceptor) tracer.interceptors.iterator().next()).priority = priority
     tracer.interceptors.add(new TraceInterceptor() {
-      @Override
-      Collection<? extends MutableSpan> onTraceComplete(Collection<? extends MutableSpan> trace) {
-        return []
-      }
+        @Override
+        Collection<? extends MutableSpan> onTraceComplete(Collection<? extends MutableSpan> trace) {
+          return []
+        }
 
-      @Override
-      int priority() {
-        return priority
-      }
-    })
+        @Override
+        int priority() {
+          return priority
+        }
+      })
 
     expect:
     tracer.interceptors.size() == 1
@@ -50,20 +54,20 @@ class TraceInterceptorTest extends DDSpecification {
     def priority = score
     def existingInterceptor = tracer.interceptors.iterator().next()
     def newInterceptor = new TraceInterceptor() {
-      @Override
-      Collection<? extends MutableSpan> onTraceComplete(Collection<? extends MutableSpan> trace) {
-        return []
-      }
+        @Override
+        Collection<? extends MutableSpan> onTraceComplete(Collection<? extends MutableSpan> trace) {
+          return []
+        }
 
-      @Override
-      int priority() {
-        return priority
+        @Override
+        int priority() {
+          return priority
+        }
       }
-    }
     tracer.interceptors.add(newInterceptor)
 
     expect:
-    tracer.interceptors == reverse ? [newInterceptor, existingInterceptor] : [existingInterceptor, newInterceptor]
+    tracer.interceptors == reverse ? [newInterceptor, existingInterceptor]: [existingInterceptor, newInterceptor]
 
     where:
     score | reverse
@@ -77,18 +81,18 @@ class TraceInterceptorTest extends DDSpecification {
     def latch = new CountDownLatch(1)
     def priority = score
     tracer.interceptors.add(new TraceInterceptor() {
-      @Override
-      Collection<? extends MutableSpan> onTraceComplete(Collection<? extends MutableSpan> trace) {
-        called.set(true)
-        latch.countDown()
-        return []
-      }
+        @Override
+        Collection<? extends MutableSpan> onTraceComplete(Collection<? extends MutableSpan> trace) {
+          called.set(true)
+          latch.countDown()
+          return []
+        }
 
-      @Override
-      int priority() {
-        return priority
-      }
-    })
+        @Override
+        int priority() {
+          return priority
+        }
+      })
     tracer.buildSpan("test " + score).start().finish()
     if (score == 0) {
       // the interceptor didn't get added, so latch will never be released.
@@ -112,27 +116,27 @@ class TraceInterceptorTest extends DDSpecification {
   def "interceptor can modify a span"() {
     setup:
     tracer.interceptors.add(new TraceInterceptor() {
-      @Override
-      Collection<? extends MutableSpan> onTraceComplete(Collection<? extends MutableSpan> trace) {
-        for (MutableSpan span : trace) {
-          span
-            .setOperationName("modifiedON-" + span.getOperationName())
-            .setServiceName("modifiedSN-" + span.getServiceName())
-            .setResourceName("modifiedRN-" + span.getResourceName())
-            .setSpanType("modifiedST-" + span.getSpanType())
-            .setTag("boolean-tag", true)
-            .setTag("number-tag", 5.0)
-            .setTag("string-tag", "howdy")
-            .setError(true)
+        @Override
+        Collection<? extends MutableSpan> onTraceComplete(Collection<? extends MutableSpan> trace) {
+          for (MutableSpan span : trace) {
+            span
+              .setOperationName("modifiedON-" + span.getOperationName())
+              .setServiceName("modifiedSN-" + span.getServiceName())
+              .setResourceName("modifiedRN-" + span.getResourceName())
+              .setSpanType("modifiedST-" + span.getSpanType())
+              .setTag("boolean-tag", true)
+              .setTag("number-tag", 5.0)
+              .setTag("string-tag", "howdy")
+              .setError(true)
+          }
+          return trace
         }
-        return trace
-      }
 
-      @Override
-      int priority() {
-        return 1
-      }
-    })
+        @Override
+        int priority() {
+          return 1
+        }
+      })
     tracer.buildSpan("test").start().finish()
     writer.waitForTraces(1)
 
@@ -165,16 +169,16 @@ class TraceInterceptorTest extends DDSpecification {
     setup:
     GlobalTracer.registerIfAbsent(tracer)
     def interceptor = new TraceInterceptor() {
-      @Override
-      Collection<? extends MutableSpan> onTraceComplete(Collection<? extends MutableSpan> trace) {
-        return trace
-      }
+        @Override
+        Collection<? extends MutableSpan> onTraceComplete(Collection<? extends MutableSpan> trace) {
+          return trace
+        }
 
-      @Override
-      int priority() {
-        return 38
+        @Override
+        int priority() {
+          return 38
+        }
       }
-    }
 
     expect:
     GlobalTracer.get().addTraceInterceptor(interceptor)

@@ -46,10 +46,10 @@ class BaseDecoratorTest extends DDSpecification {
     0 * _
 
     where:
-    connection                                      | _
-    new InetSocketAddress("localhost", 888)         | _
-    new InetSocketAddress("ipv6.google.com", 999)   | _
-    new InetSocketAddress("bad.address.local", 999) | _
+    connection                                                   | _
+    new InetSocketAddress("localhost", 888)                      | _
+    new InetSocketAddress("ipv6.google.com", 999)                | _
+    InetSocketAddress.createUnresolved("bad.address.local", 999) | _
   }
 
   def "test onError"() {
@@ -157,42 +157,42 @@ class BaseDecoratorTest extends DDSpecification {
         }
       } :
       analyticsEnabledDefault ?
-        new BaseDecorator() {
-          @Override
-          protected String[] instrumentationNames() {
-            return ["test1", "test2"]
-          }
-
-          @Override
-          protected CharSequence spanType() {
-            return "test-type"
-          }
-
-          @Override
-          protected CharSequence component() {
-            return "test-component"
-          }
-
-          protected boolean traceAnalyticsDefault() {
-            return true
-          }
-        } :
-        new BaseDecorator() {
-          @Override
-          protected String[] instrumentationNames() {
-            return ["test1", "test2"]
-          }
-
-          @Override
-          protected CharSequence spanType() {
-            return "test-type"
-          }
-
-          @Override
-          protected CharSequence component() {
-            return "test-component"
-          }
+      new BaseDecorator() {
+        @Override
+        protected String[] instrumentationNames() {
+          return ["test1", "test2"]
         }
+
+        @Override
+        protected CharSequence spanType() {
+          return "test-type"
+        }
+
+        @Override
+        protected CharSequence component() {
+          return "test-component"
+        }
+
+        protected boolean traceAnalyticsDefault() {
+          return true
+        }
+      } :
+      new BaseDecorator() {
+        @Override
+        protected String[] instrumentationNames() {
+          return ["test1", "test2"]
+        }
+
+        @Override
+        protected CharSequence spanType() {
+          return "test-type"
+        }
+
+        @Override
+        protected CharSequence component() {
+          return "test-component"
+        }
+      }
   }
 
   class SomeInnerClass implements Runnable {

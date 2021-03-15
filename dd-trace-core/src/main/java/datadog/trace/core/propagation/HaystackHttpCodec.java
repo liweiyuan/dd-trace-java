@@ -6,6 +6,7 @@ import datadog.trace.api.DDId;
 import datadog.trace.api.sampling.PrioritySampling;
 import datadog.trace.bootstrap.instrumentation.api.AgentPropagation;
 import datadog.trace.core.DDSpanContext;
+import de.thetaphi.forbiddenapis.SuppressForbidden;
 import java.util.Map;
 import java.util.TreeMap;
 import lombok.extern.slf4j.Slf4j;
@@ -123,6 +124,9 @@ public class HaystackHttpCodec {
 
     @Override
     public boolean accept(String key, String value) {
+      if (null == key || key.isEmpty()) {
+        return true;
+      }
       char first = Character.toLowerCase(key.charAt(0));
       String lowerCaseKey = null;
       int classification = IGNORE;
@@ -142,11 +146,17 @@ public class HaystackHttpCodec {
             classification = PARENT_ID;
           }
           break;
+        case 'x':
+          if (handledForwarding(key, value)) {
+            return true;
+          }
+          break;
         case 'b':
           lowerCaseKey = toLowerCase(key);
           if (lowerCaseKey.startsWith(BAGGAGE_PREFIX_LC)) {
             classification = BAGGAGE;
           }
+          break;
         default:
       }
       if (!taggedHeaders.isEmpty() && classification == IGNORE) {
@@ -188,6 +198,7 @@ public class HaystackHttpCodec {
                       lowerCaseKey.substring(BAGGAGE_PREFIX_LC.length()), HttpCodec.decode(value));
                   break;
                 }
+              default:
             }
           }
         } catch (RuntimeException e) {
@@ -222,6 +233,7 @@ public class HaystackHttpCodec {
     return DATADOG + "-" + idHex.substring(0, 4) + "-" + idHex.substring(4);
   }
 
+  @SuppressForbidden
   private static DDId convertUUIDToBigInt(String value) {
     try {
       if (value.contains("-")) {

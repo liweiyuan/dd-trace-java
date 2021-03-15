@@ -18,7 +18,7 @@ class PlayJavaWSClientTest extends PlayWSClientTestBase {
   StandaloneWSClient wsClient
 
   @Override
-  int doRequest(String method, URI uri, Map<String, String> headers, Closure callback) {
+  int doRequest(String method, URI uri, Map<String, String> headers, String body, Closure callback) {
     StandaloneWSRequest wsRequest = wsClient.url(uri.toURL().toString()).setFollowRedirects(true)
 
     headers.entrySet().each { entry -> wsRequest.addHeader(entry.getKey(), entry.getValue()) }
@@ -45,7 +45,7 @@ class PlayJavaStreamedWSClientTest extends PlayWSClientTestBase {
   StandaloneWSClient wsClient
 
   @Override
-  int doRequest(String method, URI uri, Map<String, String> headers, Closure callback) {
+  int doRequest(String method, URI uri, Map<String, String> headers, String body, Closure callback) {
     StandaloneWSRequest wsRequest = wsClient.url(uri.toURL().toString()).setFollowRedirects(true)
 
     headers.entrySet().each { entry -> wsRequest.addHeader(entry.getKey(), entry.getValue()) }
@@ -56,7 +56,7 @@ class PlayJavaStreamedWSClientTest extends PlayWSClientTestBase {
 
     // The status can be ready before the body so explicity call wait for body to be ready
     wsResponse.getBodyAsSource().runFold("", { acc, out -> "" }, materializer)
-      .toCompletableFuture().get(5, TimeUnit.SECONDS)
+    .toCompletableFuture().get(5, TimeUnit.SECONDS)
     return wsResponse.getStatus()
   }
 
@@ -75,7 +75,7 @@ class PlayScalaWSClientTest extends PlayWSClientTestBase {
   play.api.libs.ws.StandaloneWSClient wsClient
 
   @Override
-  int doRequest(String method, URI uri, Map<String, String> headers, Closure callback) {
+  int doRequest(String method, URI uri, Map<String, String> headers, String body, Closure callback) {
     Future<play.api.libs.ws.StandaloneWSResponse> futureResponse = wsClient.url(uri.toURL().toString())
       .withMethod(method)
       .withFollowRedirects(true)
@@ -106,7 +106,7 @@ class PlayScalaStreamedWSClientTest extends PlayWSClientTestBase {
   play.api.libs.ws.StandaloneWSClient wsClient
 
   @Override
-  int doRequest(String method, URI uri, Map<String, String> headers, Closure callback) {
+  int doRequest(String method, URI uri, Map<String, String> headers, String body, Closure callback) {
     Future<play.api.libs.ws.StandaloneWSResponse> futureResponse = wsClient.url(uri.toURL().toString())
       .withMethod(method)
       .withFollowRedirects(true)

@@ -18,10 +18,9 @@ public class GrizzlyDecorator
     extends HttpServerDecorator<HttpRequestPacket, HttpRequestPacket, HttpResponsePacket> {
 
   public static final CharSequence GRIZZLY_FILTER_CHAIN_SERVER =
-      UTF8BytesString.createConstant("grizzly-filterchain-server");
+      UTF8BytesString.create("grizzly-filterchain-server");
 
-  public static final CharSequence GRIZZLY_REQUEST =
-      UTF8BytesString.createConstant("grizzly.request");
+  public static final CharSequence GRIZZLY_REQUEST = UTF8BytesString.create("grizzly.request");
 
   public static final GrizzlyDecorator DECORATE = new GrizzlyDecorator();
 
@@ -78,15 +77,14 @@ public class GrizzlyDecorator
     }
     HttpRequestPacket httpRequest = (HttpRequestPacket) httpHeader;
     HttpResponsePacket httpResponse = httpRequest.getResponse();
-    AgentSpan span =
-        startSpan(GRIZZLY_REQUEST, propagate().extract(httpHeader, ExtractAdapter.GETTER));
+    AgentSpan.Context.Extracted context = propagate().extract(httpHeader, ExtractAdapter.GETTER);
+    AgentSpan span = startSpan(GRIZZLY_REQUEST, context);
     AgentScope scope = activateSpan(span);
     scope.setAsyncPropagation(true);
     DECORATE.afterStart(span);
     ctx.getAttributes().setAttribute(DD_SPAN_ATTRIBUTE, span);
     ctx.getAttributes().setAttribute(DD_RESPONSE_ATTRIBUTE, httpResponse);
-    DECORATE.onConnection(span, httpRequest);
-    DECORATE.onRequest(span, httpRequest);
+    DECORATE.onRequest(span, httpRequest, httpRequest, context);
     scope.close();
   }
 

@@ -1,5 +1,6 @@
 package datadog.common.container;
 
+import de.thetaphi.forbiddenapis.SuppressForbidden;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -21,16 +22,19 @@ import lombok.extern.slf4j.Slf4j;
 @Getter
 @Setter
 @Slf4j
+@SuppressForbidden
 public class ContainerInfo {
   private static final Path CGROUP_DEFAULT_PROCFILE = Paths.get("/proc/self/cgroup");
   private static final String UUID_REGEX =
       "[0-9a-f]{8}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{12}";
   private static final String CONTAINER_REGEX = "[0-9a-f]{64}";
+  private static final String TASK_REGEX = "[0-9a-f]{32}-\\d+";
   private static final Pattern LINE_PATTERN = Pattern.compile("(\\d+):([^:]*):(.+)$");
   private static final Pattern POD_PATTERN =
       Pattern.compile("(?:.+)?pod(" + UUID_REGEX + ")(?:.slice)?$");
   private static final Pattern CONTAINER_PATTERN =
-      Pattern.compile("(?:.+)?(" + UUID_REGEX + "|" + CONTAINER_REGEX + ")(?:.scope)?$");
+      Pattern.compile(
+          "(?:.+)?(" + UUID_REGEX + "|" + CONTAINER_REGEX + "|" + TASK_REGEX + ")(?:.scope)?$");
 
   private static final ContainerInfo INSTANCE;
 

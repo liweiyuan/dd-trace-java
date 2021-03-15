@@ -17,6 +17,11 @@ import java.util.concurrent.CompletableFuture
 @Timeout(10)
 class VertxRxCircuitBreakerWebClientTest extends HttpClientTest {
 
+  @Override
+  boolean useStrictTraceWrites() {
+    return false
+  }
+
   @Shared
   Vertx vertx = Vertx.vertx(new VertxOptions())
   @Shared
@@ -25,12 +30,12 @@ class VertxRxCircuitBreakerWebClientTest extends HttpClientTest {
   WebClient client = WebClient.create(vertx, clientOptions)
   @Shared
   CircuitBreaker breaker = CircuitBreaker.create("my-circuit-breaker", vertx,
-    new CircuitBreakerOptions()
-      .setTimeout(-1) // Disable the timeout otherwise it makes each test take this long.
+  new CircuitBreakerOptions()
+  .setTimeout(-1) // Disable the timeout otherwise it makes each test take this long.
   )
 
   @Override
-  int doRequest(String method, URI uri, Map<String, String> headers, Closure callback) {
+  int doRequest(String method, URI uri, Map<String, String> headers, String body, Closure callback) {
     def request = client.request(HttpMethod.valueOf(method), uri.port, uri.host, "$uri")
     headers.each { request.putHeader(it.key, it.value) }
 

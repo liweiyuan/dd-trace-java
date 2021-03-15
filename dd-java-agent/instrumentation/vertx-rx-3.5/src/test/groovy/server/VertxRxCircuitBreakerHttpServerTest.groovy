@@ -9,6 +9,8 @@ import io.vertx.reactivex.ext.web.Router
 
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.ERROR
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.EXCEPTION
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.FORWARDED
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.PATH_PARAM
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.QUERY_PARAM
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.REDIRECT
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.SUCCESS
@@ -35,10 +37,10 @@ class VertxRxCircuitBreakerHttpServerTest extends VertxHttpServerTest {
       final Router router = Router.router(super.@vertx)
       final CircuitBreaker breaker =
         CircuitBreaker.create(
-          "my-circuit-breaker",
-          super.@vertx,
-          new CircuitBreakerOptions()
-            .setTimeout(-1) // Disable the timeout otherwise it makes each test take this long.
+        "my-circuit-breaker",
+        super.@vertx,
+        new CircuitBreakerOptions()
+        .setTimeout(-1) // Disable the timeout otherwise it makes each test take this long.
         )
 
       router.route(SUCCESS.path).handler { ctx ->
@@ -54,6 +56,19 @@ class VertxRxCircuitBreakerHttpServerTest extends VertxHttpServerTest {
           }
         })
       }
+      router.route(FORWARDED.path).handler { ctx ->
+        breaker.executeCommand({ future ->
+          future.complete(FORWARDED)
+        }, { it ->
+          if (it.failed()) {
+            throw it.cause()
+          }
+          HttpServerTest.ServerEndpoint endpoint = it.result()
+          controller(endpoint) {
+            ctx.response().setStatusCode(FORWARDED.status).end(ctx.request().getHeader("x-forwarded-for"))
+          }
+        })
+      }
       router.route(QUERY_PARAM.path).handler { ctx ->
         breaker.executeCommand({ future ->
           future.complete(QUERY_PARAM)
@@ -64,6 +79,19 @@ class VertxRxCircuitBreakerHttpServerTest extends VertxHttpServerTest {
           HttpServerTest.ServerEndpoint endpoint = it.result()
           controller(endpoint) {
             ctx.response().setStatusCode(endpoint.status).end(ctx.request().query())
+          }
+        })
+      }
+      router.route("/path/:id/param").handler { ctx ->
+        breaker.executeCommand({ future ->
+          future.complete(PATH_PARAM)
+        }, { it ->
+          if (it.failed()) {
+            throw it.cause()
+          }
+          HttpServerTest.ServerEndpoint endpoint = it.result()
+          controller(endpoint) {
+            ctx.response().setStatusCode(endpoint.status).end(ctx.request().getParam("id"))
           }
         })
       }

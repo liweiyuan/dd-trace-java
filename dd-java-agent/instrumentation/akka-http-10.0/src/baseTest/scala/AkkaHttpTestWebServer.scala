@@ -12,6 +12,7 @@ import akka.http.scaladsl.server.{
   Route,
   RouteResult
 }
+import akka.http.scaladsl.settings.ServerSettings
 import akka.http.scaladsl.util.FastFuture.EnhancedFuture
 import akka.stream.{ActorMaterializer, Materializer}
 import com.typesafe.config.Config
@@ -21,10 +22,10 @@ import datadog.trace.agent.test.utils.TraceUtils
 import datadog.trace.bootstrap.instrumentation.api.AgentTracer
 import datadog.trace.bootstrap.instrumentation.api.AgentTracer.activeSpan
 import groovy.lang.Closure
+
 import scala.concurrent.duration._
 import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.util.control.NonFatal
-
 import scala.language.postfixOps
 
 class AkkaHttpTestWebServer(port: Int, binder: Binder) {
@@ -101,6 +102,23 @@ object AkkaHttpTestWebServer {
     }
   }
 
+  val BindAndHandleAsyncHttp2: Binder = new Binder {
+    override def name: String = "bind-and-handle-async-http2"
+    override def bind(port: Int)(
+        implicit system: ActorSystem,
+        materializer: Materializer
+    ): Future[ServerBinding] = {
+      import materializer.executionContext
+      val serverSettings = enableHttp2(ServerSettings(system))
+      Http().bindAndHandleAsync(
+        asyncHandler,
+        "localhost",
+        port,
+        settings = serverSettings
+      )
+    }
+  }
+
   // This part defines the routes using the Scala routing DSL
   // ---------------------------------------------------------------------- //
   private val exceptionHandler = ExceptionHandler {
@@ -136,12 +154,18 @@ object AkkaHttpTestWebServer {
     )
   }
 
-  private def route(implicit ec: ExecutionContext): Route = withController {
+  def route(implicit ec: ExecutionContext): Route = withController {
     get {
       path(SUCCESS.rawPath) {
         complete(
           HttpResponse(status = SUCCESS.getStatus, entity = SUCCESS.getBody)
         )
+      } ~ path(FORWARDED.rawPath) {
+        headerValueByName("x-forwarded-for") { address =>
+          complete(
+            HttpResponse(status = FORWARDED.getStatus, entity = address)
+          )
+        }
       } ~ path(QUERY_PARAM.rawPath) {
         parameter("some") { query =>
           complete(
@@ -177,7 +201,7 @@ object AkkaHttpTestWebServer {
   // This part defines the sync and async handler functions
   // ---------------------------------------------------------------------- //
 
-  private val syncHandler: HttpRequest => HttpResponse = {
+  val syncHandler: HttpRequest => HttpResponse = {
     case HttpRequest(GET, uri: Uri, _, _, _) => {
       val path = uri.path.toString()
       val endpoint = HttpServerTest.ServerEndpoint.forPath(path)
@@ -188,6 +212,7 @@ object AkkaHttpTestWebServer {
             val resp = HttpResponse(status = endpoint.getStatus)
             endpoint match {
               case SUCCESS     => resp.withEntity(endpoint.getBody)
+              case FORWARDED   => resp.withEntity(endpoint.getBody) // cheating
               case QUERY_PARAM => resp.withEntity(uri.queryString().orNull)
               case REDIRECT =>
                 resp.withHeaders(headers.Location(endpoint.getBody))
@@ -217,9 +242,15 @@ object AkkaHttpTestWebServer {
     }
   }
 
-  private def asyncHandler(
+  def asyncHandler(
       implicit ec: ExecutionContext
   ): HttpRequest => Future[HttpResponse] = { request =>
     Future { syncHandler(request) }
+  }
+
+  def enableHttp2(serverSettings: ServerSettings): ServerSettings = {
+    val previewServerSettings =
+      serverSettings.previewServerSettings.withEnableHttp2(true)
+    serverSettings.withPreviewServerSettings(previewServerSettings)
   }
 }

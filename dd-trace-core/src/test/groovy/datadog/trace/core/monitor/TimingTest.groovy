@@ -1,14 +1,19 @@
 package datadog.trace.core.monitor
 
 import com.timgroup.statsd.StatsDClient
+import datadog.trace.api.Platform
 import datadog.trace.core.util.SystemAccess
 import datadog.trace.test.util.DDSpecification
 import org.junit.Assert
 import org.junit.Assume
+import spock.lang.Requires
 
 import static java.lang.management.ManagementFactory.getThreadMXBean
 import static java.util.concurrent.TimeUnit.MILLISECONDS
 
+@Requires({
+  Platform.isJavaVersionAtLeast(8)
+})
 class TimingTest extends DDSpecification {
 
   def "timer times stuff"() {
@@ -21,10 +26,9 @@ class TimingTest extends DDSpecification {
     Thread.sleep(200)
     recording.close()
     then:
-    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toNanos(200) }, "stat:avg")
-    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toNanos(200) }, "stat:p50")
-    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toNanos(200) }, "stat:p99")
-    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toNanos(200) }, "stat:max")
+    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toMicros(200) }, "stat:p50")
+    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toMicros(200) }, "stat:p99")
+    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toMicros(200) }, "stat:max")
     0 * _
   }
 
@@ -38,10 +42,9 @@ class TimingTest extends DDSpecification {
     Thread.sleep(200)
     recording.close()
     then:
-    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toNanos(200) }, { it[0] == "stat:avg" && it[1].startsWith("thread:") })
-    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toNanos(200) }, { it[0] == "stat:p50" && it[1].startsWith("thread:") })
-    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toNanos(200) }, { it[0] == "stat:p99" && it[1].startsWith("thread:") })
-    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toNanos(200) }, { it[0] == "stat:max" && it[1].startsWith("thread:") })
+    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toMicros(200) }, { it[0] == "stat:p50" && it[1].startsWith("thread:") })
+    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toMicros(200) }, { it[0] == "stat:p99" && it[1].startsWith("thread:") })
+    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toMicros(200) }, { it[0] == "stat:max" && it[1].startsWith("thread:") })
     0 * _
   }
 
@@ -62,7 +65,12 @@ class TimingTest extends DDSpecification {
     }
 
     where:
-    timerCreator << [{ it.newTimer("my_timer") }, { it.newThreadLocalTimer("my_timer") }]
+    timerCreator << [
+      { it.newTimer("my_timer") },
+      {
+        it.newThreadLocalTimer("my_timer")
+      }
+    ]
   }
 
   def "disabled monitoring produces no ops"() {
@@ -83,10 +91,12 @@ class TimingTest extends DDSpecification {
     }
 
     where:
-    recording << [Monitoring.DISABLED.newTimer("foo"),
-                  Monitoring.DISABLED.newTimer("foo", "tag"),
-                  Monitoring.DISABLED.newThreadLocalTimer("foo"),
-                  Monitoring.DISABLED.newCPUTimer("foo")]
+    recording << [
+      Monitoring.DISABLED.newTimer("foo"),
+      Monitoring.DISABLED.newTimer("foo", "tag"),
+      Monitoring.DISABLED.newThreadLocalTimer("foo"),
+      Monitoring.DISABLED.newCPUTimer("foo")
+    ]
   }
 
   def "cpu timing records CPU time when enabled"() {
@@ -101,10 +111,9 @@ class TimingTest extends DDSpecification {
     Thread.sleep(200)
     recording.close()
     then:
-    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toNanos(200) }, { it[0] == "stat:avg" && it[1].startsWith("thread:") })
-    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toNanos(200) }, { it[0] == "stat:p50" && it[1].startsWith("thread:") })
-    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toNanos(200) }, { it[0] == "stat:p99" && it[1].startsWith("thread:") })
-    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toNanos(200) }, { it[0] == "stat:max" && it[1].startsWith("thread:") })
+    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toMicros(200) }, { it[0] == "stat:p50" && it[1].startsWith("thread:") })
+    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toMicros(200) }, { it[0] == "stat:p99" && it[1].startsWith("thread:") })
+    1 * statsd.gauge("my_timer", { it > MILLISECONDS.toMicros(200) }, { it[0] == "stat:max" && it[1].startsWith("thread:") })
     1 * statsd.gauge("my_timer.cpu", { it > 0 }, { it[0].startsWith("thread:") })
     0 * _
     cleanup:

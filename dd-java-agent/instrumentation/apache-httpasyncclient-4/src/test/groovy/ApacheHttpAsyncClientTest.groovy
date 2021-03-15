@@ -16,9 +16,9 @@ class ApacheHttpAsyncClientTest extends HttpClientTest {
 
   @Shared
   RequestConfig requestConfig = RequestConfig.custom()
-    .setConnectTimeout(CONNECT_TIMEOUT_MS)
-    .setSocketTimeout(READ_TIMEOUT_MS)
-    .build()
+  .setConnectTimeout(CONNECT_TIMEOUT_MS)
+  .setSocketTimeout(READ_TIMEOUT_MS)
+  .build()
 
   @AutoCleanup
   @Shared
@@ -29,7 +29,7 @@ class ApacheHttpAsyncClientTest extends HttpClientTest {
   }
 
   @Override
-  int doRequest(String method, URI uri, Map<String, String> headers, Closure callback) {
+  int doRequest(String method, URI uri, Map<String, String> headers, String body, Closure callback) {
     def request = new HttpUriRequest(method, uri)
     headers.entrySet().each {
       request.addHeader(new BasicHeader(it.key, it.value))
@@ -39,22 +39,22 @@ class ApacheHttpAsyncClientTest extends HttpClientTest {
 
     def handler = callback == null ? null : new FutureCallback<HttpResponse>() {
 
-      @Override
-      void completed(HttpResponse result) {
-        callback()
-        latch.countDown()
-      }
+        @Override
+        void completed(HttpResponse result) {
+          callback()
+          latch.countDown()
+        }
 
-      @Override
-      void failed(Exception ex) {
-        latch.countDown()
-      }
+        @Override
+        void failed(Exception ex) {
+          latch.countDown()
+        }
 
-      @Override
-      void cancelled() {
-        latch.countDown()
+        @Override
+        void cancelled() {
+          latch.countDown()
+        }
       }
-    }
 
     try {
       def response = client.execute(request, handler).get()

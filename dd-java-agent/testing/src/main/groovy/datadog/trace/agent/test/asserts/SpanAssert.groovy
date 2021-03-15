@@ -21,9 +21,9 @@ class SpanAssert {
   }
 
   static void assertSpan(DDSpan span,
-                         @ClosureParams(value = SimpleType, options = ['datadog.trace.agent.test.asserts.SpanAssert'])
-                         @DelegatesTo(value = SpanAssert, strategy = Closure.DELEGATE_FIRST) Closure spec,
-                         DDSpan previous = null) {
+    @ClosureParams(value = SimpleType, options = ['datadog.trace.agent.test.asserts.SpanAssert'])
+    @DelegatesTo(value = SpanAssert, strategy = Closure.DELEGATE_FIRST) Closure spec,
+    DDSpan previous = null) {
     def asserter = new SpanAssert(span, previous)
     asserter.assertSpan spec
   }
@@ -143,6 +143,16 @@ class SpanAssert {
     checked.errored = true
   }
 
+  def topLevel(boolean topLevel) {
+    assert span.isTopLevel() == topLevel
+    checked.topLevel = true
+  }
+
+  def measured(boolean measured) {
+    assert span.measured == measured
+    checked.measured = true
+  }
+
   void assertDefaults() {
     if (!checked.spanType) {
       spanType(null)
@@ -154,12 +164,12 @@ class SpanAssert {
   }
 
   void tags(@ClosureParams(value = SimpleType, options = ['datadog.trace.agent.test.asserts.TagsAssert'])
-            @DelegatesTo(value = TagsAssert, strategy = Closure.DELEGATE_FIRST) Closure spec) {
+    @DelegatesTo(value = TagsAssert, strategy = Closure.DELEGATE_FIRST) Closure spec) {
     assertTags(span, spec)
   }
 
   void metrics(@ClosureParams(value = SimpleType, options = ['datadog.trace.agent.test.asserts.MetricsAssert'])
-               @DelegatesTo(value = MetricsAssert, strategy = Closure.DELEGATE_FIRST) Closure spec) {
+    @DelegatesTo(value = MetricsAssert, strategy = Closure.DELEGATE_FIRST) Closure spec) {
     assertMetrics(span, spec)
   }
 }

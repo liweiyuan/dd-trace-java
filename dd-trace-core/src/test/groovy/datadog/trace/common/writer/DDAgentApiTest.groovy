@@ -3,20 +3,26 @@ package datadog.trace.common.writer
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.timgroup.statsd.NoOpStatsDClient
+import datadog.trace.api.DDId
+import datadog.trace.api.sampling.PrioritySampling
 import datadog.trace.bootstrap.instrumentation.api.InstrumentationTags
 import datadog.trace.common.sampling.RateByServiceSampler
 import datadog.trace.common.writer.ddagent.DDAgentApi
+import datadog.trace.common.writer.ddagent.DDAgentFeaturesDiscovery
 import datadog.trace.common.writer.ddagent.DDAgentResponseListener
 import datadog.trace.common.writer.ddagent.Payload
 import datadog.trace.common.writer.ddagent.TraceMapperV0_4
 import datadog.trace.common.writer.ddagent.TraceMapperV0_5
 import datadog.trace.core.DDSpan
 import datadog.trace.core.DDSpanContext
-import datadog.trace.core.SpanFactory
+import datadog.trace.core.http.OkHttpUtils
 import datadog.trace.core.monitor.Monitoring
 import datadog.trace.core.serialization.ByteBufferConsumer
+import datadog.trace.core.serialization.FlushingBuffer
 import datadog.trace.core.serialization.msgpack.MsgPackWriter
-import datadog.trace.test.util.DDSpecification
+import datadog.trace.core.test.DDCoreSpecification
+import okhttp3.HttpUrl
+import okhttp3.OkHttpClient
 import org.msgpack.jackson.dataformat.MessagePackFactory
 import spock.lang.Shared
 import spock.lang.Timeout
@@ -30,7 +36,7 @@ import java.util.concurrent.atomic.AtomicReference
 import static datadog.trace.agent.test.server.http.TestHttpServer.httpServer
 
 @Timeout(20)
-class DDAgentApiTest extends DDSpecification {
+class DDAgentApiTest extends DDCoreSpecification {
 
   @Shared
   Monitoring monitoring = new Monitoring(new NoOpStatsDClient(), 1, TimeUnit.SECONDS)
@@ -40,7 +46,6 @@ class DDAgentApiTest extends DDSpecification {
     httpServer {
       handlers {
         put(latestVersion) {
-          System.out.println(request.getHeader("X-Datadog-Trace-Count"))
           if (request.contentType != "application/msgpack") {
             response.status(400).send("wrong type: $request.contentType")
           } else if (request.contentLength <= 0) {
@@ -53,10 +58,11 @@ class DDAgentApiTest extends DDSpecification {
     }
   }
 
+
   def "sending an empty list of traces returns no errors"() {
     setup:
     def agent = newAgent(agentVersion)
-    def client = createAgentApi(agent.address.port)
+    def client = createAgentApi(agent.address.toString())[1]
     def payload = prepareTraces(agentVersion, [])
 
     expect:
@@ -72,25 +78,6 @@ class DDAgentApiTest extends DDSpecification {
     agentVersion << ["v0.3/traces", "v0.4/traces", "v0.5/traces"]
   }
 
-  def "get right mapper for latest endpoint"() {
-    setup:
-    def agent = newAgent(version)
-    def client = createAgentApi(agent.address.port)
-    def mapper = client.selectTraceMapper()
-    expect:
-    mapper.getClass().isAssignableFrom(expected)
-    agent.getLastRequest().path == "/" + version
-
-    cleanup:
-    agent.close()
-
-    where:
-    version       | expected
-    "v0.5/traces" | TraceMapperV0_5
-    "v0.4/traces" | TraceMapperV0_4
-    "v0.3/traces" | TraceMapperV0_4
-  }
-
   def "non-200 response"() {
     setup:
     def agent = httpServer {
@@ -104,7 +91,7 @@ class DDAgentApiTest extends DDSpecification {
         }
       }
     }
-    def client = createAgentApi(agent.address.port)
+    def client = createAgentApi(agent.address.toString())[1]
     Payload payload = prepareTraces("v0.3/traces", [])
     expect:
     def response = client.sendSerializedTraces(payload)
@@ -125,7 +112,7 @@ class DDAgentApiTest extends DDSpecification {
         }
       }
     }
-    def client = createAgentApi(agent.address.port)
+    def client = createAgentApi(agent.address.toString())[1]
     def payload = prepareTraces(agentVersion, traces)
 
     expect:
@@ -136,6 +123,8 @@ class DDAgentApiTest extends DDSpecification {
     agent.lastRequest.headers.get("Datadog-Meta-Lang-Version") == System.getProperty("java.version", "unknown")
     agent.lastRequest.headers.get("Datadog-Meta-Tracer-Version") == "Stubbed-Test-Version"
     agent.lastRequest.headers.get("X-Datadog-Trace-Count") == "${traces.size()}"
+    agent.lastRequest.headers.get("Datadog-Client-Dropped-P0-Traces") == "${payload.droppedTraces()}"
+    agent.lastRequest.headers.get("Datadog-Client-Dropped-P0-Spans") == "${payload.droppedSpans()}"
     convertList(agentVersion, agent.lastRequest.body) == expectedRequestBody
 
     cleanup:
@@ -143,16 +132,17 @@ class DDAgentApiTest extends DDSpecification {
 
     // Populate thread info dynamically as it is different when run via gradle vs idea.
     where:
-    traces                                                                 | expectedRequestBody
-    []                                                                     | []
-    [[SpanFactory.newSpanOf(1L).setTag("service.name", "my-service")]]     | [[new TreeMap<>([
+    // spotless:off
+    traces                                              | expectedRequestBody
+    []                                                  | []
+    [[buildSpan(1L, "service.name", "my-service")]]     | [[new TreeMap<>([
       "duration" : 10,
       "error"    : 0,
       "meta"     : ["thread.name": Thread.currentThread().getName(), "thread.id": "${Thread.currentThread().id}"],
       "metrics"  : [
-        (InstrumentationTags.DD_TOP_LEVEL as String) : 1,
-        (RateByServiceSampler.SAMPLING_AGENT_RATE)   : 1.0,
-        (DDSpanContext.PRIORITY_SAMPLING_KEY)        : 1
+        (DDSpanContext.PRIORITY_SAMPLING_KEY)       : 1,
+        (InstrumentationTags.DD_TOP_LEVEL as String): 1,
+        (RateByServiceSampler.SAMPLING_AGENT_RATE)  : 1.0,
       ],
       "name"     : "fakeOperation",
       "parent_id": 0,
@@ -163,14 +153,14 @@ class DDAgentApiTest extends DDSpecification {
       "trace_id" : 1,
       "type"     : "fakeType"
     ])]]
-    [[SpanFactory.newSpanOf(100L).setTag("resource.name", "my-resource")]] | [[new TreeMap<>([
+    [[buildSpan(100L, "resource.name", "my-resource")]] | [[new TreeMap<>([
       "duration" : 10,
       "error"    : 0,
       "meta"     : ["thread.name": Thread.currentThread().getName(), "thread.id": "${Thread.currentThread().id}"],
       "metrics"  : [
-        (InstrumentationTags.DD_TOP_LEVEL as String) : 1,
-        (RateByServiceSampler.SAMPLING_AGENT_RATE)   : 1.0,
-        (DDSpanContext.PRIORITY_SAMPLING_KEY)        : 1
+        (DDSpanContext.PRIORITY_SAMPLING_KEY)       : 1,
+        (InstrumentationTags.DD_TOP_LEVEL as String): 1,
+        (RateByServiceSampler.SAMPLING_AGENT_RATE)  : 1.0,
       ],
       "name"     : "fakeOperation",
       "parent_id": 0,
@@ -181,6 +171,7 @@ class DDAgentApiTest extends DDSpecification {
       "trace_id" : 1,
       "type"     : "fakeType"
     ])]]
+    // spotless:on
 
     ignore = traces.each {
       it.each {
@@ -205,9 +196,11 @@ class DDAgentApiTest extends DDSpecification {
         }
       }
     }
-    def client = createAgentApi(agent.address.port)
+    def client = createAgentApi(agent.address.toString())[1]
     client.addResponseListener(responseListener)
     def payload = prepareTraces(agentVersion, [[], [], []])
+    payload.withDroppedTraces(1)
+    payload.withDroppedTraces(3)
 
     when:
     client.sendSerializedTraces(payload)
@@ -217,6 +210,8 @@ class DDAgentApiTest extends DDSpecification {
     agent.lastRequest.headers.get("Datadog-Meta-Lang-Version") == System.getProperty("java.version", "unknown")
     agent.lastRequest.headers.get("Datadog-Meta-Tracer-Version") == "Stubbed-Test-Version"
     agent.lastRequest.headers.get("X-Datadog-Trace-Count") == "3" // false data shows the value provided via traceCounter.
+    agent.lastRequest.headers.get("Datadog-Client-Dropped-P0-Traces") == "${payload.droppedTraces()}"
+    agent.lastRequest.headers.get("Datadog-Client-Dropped-P0-Spans") == "${payload.droppedSpans()}"
 
     cleanup:
     agent.close()
@@ -235,7 +230,7 @@ class DDAgentApiTest extends DDSpecification {
         }
       }
     }
-    def client = createAgentApi(v3Agent.address.port)
+    def client = createAgentApi(v3Agent.address.toString())[1]
     def payload = prepareTraces("v0.4/traces", [])
     expect:
     client.sendSerializedTraces(payload).success()
@@ -262,7 +257,7 @@ class DDAgentApiTest extends DDSpecification {
       }
     }
     def port = badPort ? 999 : agent.address.port
-    def client = createAgentApi(port)
+    def client = createAgentApi("http://" + agent.address.host + ":" + port)[1]
     def payload = prepareTraces("v0.4/traces", [])
     def result = client.sendSerializedTraces(payload)
 
@@ -294,7 +289,7 @@ class DDAgentApiTest extends DDSpecification {
         }
       }
     }
-    def client = createAgentApi(agent.address.port)
+    def client = createAgentApi(agent.address.toString())[1]
     def payload = prepareTraces(agentVersion, traces)
     when:
     def success = client.sendSerializedTraces(payload).success()
@@ -310,6 +305,7 @@ class DDAgentApiTest extends DDSpecification {
     // all the sizes match, except in v0.5 where there is 1 byte for a
     // 2 element array header and 1 byte for an empty dictionary
     where:
+    // spotless:off
     agentVersion  | expectedLength | traces
     "v0.4/traces" | 1              | []
     "v0.4/traces" | 3              | [[], []]
@@ -323,13 +319,14 @@ class DDAgentApiTest extends DDSpecification {
     "v0.5/traces" | 19 + 1 + 1     | (1..16).collect { [] }
     "v0.5/traces" | 65538 + 1 + 1  | (1..((1 << 16) - 1)).collect { [] }
     "v0.5/traces" | 65541 + 1 + 1  | (1..(1 << 16)).collect { [] }
+    // spotless:on
   }
 
   def "Embedded HTTP client rejects async requests"() {
     setup:
     def agent = newAgent("v0.5/traces")
-    def client = createAgentApi(agent.address.port)
-    client.detectEndpoint()
+    def (discovery, client) = createAgentApi(agent.address.toString())
+    discovery.discover()
     def httpExecutorService = client.httpClient.dispatcher().executorService()
     when:
     httpExecutorService.execute({})
@@ -345,7 +342,15 @@ class DDAgentApiTest extends DDSpecification {
     if (agentVersion.equals("v0.5/traces")) {
       return convertListV5(bytes)
     }
-    return mapper.readValue(bytes, new TypeReference<List<List<TreeMap<String, Object>>>>() {})
+    def returnVal = mapper.readValue(bytes, new TypeReference<List<List<TreeMap<String, Object>>>>() {})
+    returnVal.each {
+      it.each {
+        it["meta"].remove("runtime-id")
+        it["meta"].remove("language")
+      }
+    }
+
+    return returnVal
   }
 
   static List<List<TreeMap<String, Object>>> convertListV5(byte[] bytes) {
@@ -368,6 +373,9 @@ class DDAgentApiTest extends DDSpecification {
           map.put("meta", span.get(9))
           map.put("metrics", span.get(10))
           map.put("type", span.get(11))
+
+          map.get("meta").remove("runtime-id")
+          map.get("meta").remove("language")
         }
         mapTrace.add(map)
       }
@@ -377,9 +385,8 @@ class DDAgentApiTest extends DDSpecification {
   }
 
   Payload prepareTraces(String agentVersion, List<List<DDSpan>> traces) {
-    ByteBuffer buffer = ByteBuffer.allocate(1 << 20)
     Traces traceCapture = new Traces()
-    def packer = new MsgPackWriter(traceCapture, buffer)
+    def packer = new MsgPackWriter(new FlushingBuffer(1 << 20, traceCapture))
     def traceMapper = agentVersion.equals("v0.5/traces")
       ? new TraceMapperV0_5()
       : new TraceMapperV0_4()
@@ -388,7 +395,8 @@ class DDAgentApiTest extends DDSpecification {
     }
     packer.flush()
     return traceMapper.newPayload()
-      .withBody(traceCapture.traceCount, traceCapture.buffer)
+      .withBody(traceCapture.traceCount,
+      traces.isEmpty() ? ByteBuffer.allocate(0) : traceCapture.buffer)
   }
 
   static class Traces implements ByteBufferConsumer {
@@ -402,7 +410,36 @@ class DDAgentApiTest extends DDSpecification {
     }
   }
 
-  DDAgentApi createAgentApi(int port) {
-    return new DDAgentApi("http://localhost:" + port, null, 1000, monitoring)
+  def createAgentApi(String url) {
+    HttpUrl agentUrl = HttpUrl.get(url)
+    OkHttpClient client = OkHttpUtils.buildHttpClient(agentUrl, null, 1000)
+    DDAgentFeaturesDiscovery discovery = new DDAgentFeaturesDiscovery(client, monitoring, agentUrl, true, true)
+    return [discovery, new DDAgentApi(client, agentUrl, discovery, monitoring, false)]
+  }
+
+  DDSpan buildSpan(long timestamp, String tag, String value) {
+    def tracer = tracerBuilder().writer(new ListWriter()).build()
+
+    def context = new DDSpanContext(
+      DDId.from(1),
+      DDId.from(1),
+      DDId.ZERO,
+      null,
+      "fakeService",
+      "fakeOperation",
+      "fakeResource",
+      PrioritySampling.UNSET,
+      null,
+      [:],
+      false,
+      "fakeType",
+      0,
+      tracer.pendingTraceFactory.create(DDId.from(1)))
+
+    def span = DDSpan.create(timestamp, context)
+    span.setTag(tag, value)
+
+    tracer.close()
+    return span
   }
 }

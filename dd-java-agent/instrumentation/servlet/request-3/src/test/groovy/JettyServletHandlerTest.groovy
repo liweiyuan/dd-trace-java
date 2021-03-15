@@ -4,15 +4,17 @@ import datadog.trace.api.DDTags
 import datadog.trace.api.config.GeneralConfig
 import datadog.trace.api.env.CapturedEnvironment
 import datadog.trace.bootstrap.instrumentation.api.Tags
-import datadog.trace.instrumentation.jetty9.JettyDecorator
+import org.eclipse.jetty.server.Request
 import org.eclipse.jetty.server.Server
 import org.eclipse.jetty.server.handler.ErrorHandler
 import org.eclipse.jetty.servlet.ServletHandler
 
 import javax.servlet.Servlet
+import javax.servlet.ServletException
 import javax.servlet.http.HttpServletRequest
 
 import static JettyServlet3Test.IS_LATEST
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.CUSTOM_EXCEPTION
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.ERROR
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.EXCEPTION
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.NOT_FOUND
@@ -29,11 +31,22 @@ class JettyServletHandlerTest extends AbstractServlet3Test<Server, ServletHandle
     server.setHandler(handler)
     setupServlets(handler)
     server.addBean(new ErrorHandler() {
-      protected void handleErrorPage(HttpServletRequest request, Writer writer, int code, String message) throws IOException {
-        Throwable th = (Throwable) request.getAttribute("javax.servlet.error.exception")
-        writer.write(th ? th.message : message)
-      }
-    })
+        protected void handleErrorPage(HttpServletRequest request, Writer writer, int code, String message) throws IOException {
+          Throwable t = (Throwable) request.getAttribute("javax.servlet.error.exception")
+          def response = ((Request) request).response
+          if (t) {
+            if (t instanceof ServletException) {
+              t = t.rootCause
+            }
+            if (t instanceof InputMismatchException) {
+              response.status = CUSTOM_EXCEPTION.status
+            }
+            writer.write(t.message)
+          } else {
+            writer.write(message)
+          }
+        }
+      })
     server.start()
     return server
   }
@@ -51,7 +64,7 @@ class JettyServletHandlerTest extends AbstractServlet3Test<Server, ServletHandle
 
   @Override
   String component() {
-    return JettyDecorator.JETTY_SERVER
+    return "jetty-server"
   }
 
   @Override
@@ -89,7 +102,7 @@ class JettyServletHandlerTest extends AbstractServlet3Test<Server, ServletHandle
       tags {
         "$Tags.COMPONENT" component
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
-        "$Tags.PEER_HOST_IPV4" { it == null || it == "127.0.0.1" } // Optional
+        "$Tags.PEER_HOST_IPV4" { endpoint == ServerEndpoint.FORWARDED ? it == endpoint.body : (it == null || it == "127.0.0.1") }
         "$Tags.PEER_PORT" Integer
         "$Tags.HTTP_URL" "${endpoint.resolve(address)}"
         "$Tags.HTTP_METHOD" method
@@ -104,10 +117,10 @@ class JettyServletHandlerTest extends AbstractServlet3Test<Server, ServletHandle
           "servlet.path" endpoint.path
         }
 
-        if (endpoint.errored) {
-          "error.msg" { it == null || it == EXCEPTION.body }
-          "error.type" { it == null || it == Exception.name }
-          "error.stack" { it == null || it instanceof String }
+        if (endpoint.throwsException && !dispatch) {
+          "error.msg" endpoint.body
+          "error.type" { it == Exception.name || it == InputMismatchException.name }
+          "error.stack" String
         }
         if (endpoint.query) {
           "$DDTags.HTTP_QUERY" endpoint.query
@@ -117,8 +130,12 @@ class JettyServletHandlerTest extends AbstractServlet3Test<Server, ServletHandle
     }
   }
 
+  @Override
   boolean hasResponseSpan(ServerEndpoint endpoint) {
-    return endpoint == REDIRECT || endpoint == ERROR || (endpoint == EXCEPTION && !IS_LATEST) || endpoint == NOT_FOUND
+    if (IS_LATEST) {
+      return [NOT_FOUND, ERROR, REDIRECT].contains(endpoint)
+    }
+    return [NOT_FOUND, ERROR, EXCEPTION, CUSTOM_EXCEPTION, REDIRECT].contains(endpoint)
   }
 
   @Override

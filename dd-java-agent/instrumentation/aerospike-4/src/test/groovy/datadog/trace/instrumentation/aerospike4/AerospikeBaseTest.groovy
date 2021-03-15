@@ -29,9 +29,9 @@ abstract class AerospikeBaseTest extends AgentTestRunner {
 
   def setup() throws Exception {
     /*
-      CI will provide us with an aerospike container running alongside our build.
-      When building locally, however, we need to take matters into our own hands
-      and we use 'testcontainers' for this.
+     CI will provide us with an aerospike container running alongside our build.
+     When building locally, however, we need to take matters into our own hands
+     and we use 'testcontainers' for this.
      */
     if ("true" != System.getenv("CI")) {
       aerospike = new GenericContainer('aerospike:latest')
@@ -63,6 +63,7 @@ abstract class AerospikeBaseTest extends AgentTestRunner {
       } else {
         childOf((DDSpan) parentSpan)
       }
+      topLevel parentSpan == null
       tags {
         "$Tags.COMPONENT" "java-aerospike"
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_CLIENT

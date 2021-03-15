@@ -4,16 +4,30 @@ import datadog.trace.agent.test.asserts.ListWriterAssert
 import datadog.trace.bootstrap.instrumentation.api.AgentSpan
 import datadog.trace.bootstrap.instrumentation.api.Tags
 import datadog.trace.core.DDSpan
-import org.eclipse.jetty.http.HttpMethods
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings
+import org.eclipse.jetty.http.HttpMethod
+import org.eclipse.jetty.http.HttpVersion
 import org.eclipse.jetty.server.Handler
+import org.eclipse.jetty.server.HttpConfiguration
+import org.eclipse.jetty.server.HttpConnectionFactory
 import org.eclipse.jetty.server.Request
+import org.eclipse.jetty.server.SecureRequestCustomizer
 import org.eclipse.jetty.server.Server
+import org.eclipse.jetty.server.ServerConnector
+import org.eclipse.jetty.server.SslConnectionFactory
 import org.eclipse.jetty.server.handler.AbstractHandler
 import org.eclipse.jetty.server.handler.HandlerList
+import org.eclipse.jetty.util.ssl.SslContextFactory
 
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSession
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 import javax.servlet.ServletException
 import javax.servlet.http.HttpServletRequest
 import javax.servlet.http.HttpServletResponse
+import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicReference
@@ -21,11 +35,15 @@ import java.util.concurrent.atomic.AtomicReference
 import static datadog.trace.agent.test.server.http.HttpServletRequestExtractAdapter.GETTER
 import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.propagate
 import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.startSpan
+import static org.eclipse.jetty.http.HttpMethod.CONNECT
+import static org.eclipse.jetty.http.HttpMethod.GET
+import static org.eclipse.jetty.http.HttpMethod.POST
+import static org.eclipse.jetty.http.HttpMethod.PUT
 
+@SuppressFBWarnings("IS2_INCONSISTENT_SYNC")
 class TestHttpServer implements AutoCloseable {
 
   static TestHttpServer httpServer(@DelegatesTo(value = TestHttpServer, strategy = Closure.DELEGATE_FIRST) Closure spec) {
-
     def server = new TestHttpServer()
     def clone = (Closure) spec.clone()
     clone.delegate = server
@@ -38,15 +56,35 @@ class TestHttpServer implements AutoCloseable {
   private final Server internalServer
   private HandlersSpec handlers
 
-
+  public String keystorePath
   private URI address
+  private URI secureAddress
   private final AtomicReference<HandlerApi.RequestApi> last = new AtomicReference<>()
 
-  private TestHttpServer() {
-    internalServer = new Server(0)
-    internalServer.connectors.each {
-      it.setHost('localhost')
+  public final SSLContext sslContext = SSLContext.getInstance("TLSv1.2")
+
+  private final X509TrustManager trustManager = new X509TrustManager() {
+    X509Certificate[] getAcceptedIssuers() {
+      return new X509Certificate[0]
     }
+
+    void checkClientTrusted(X509Certificate[] certificate, String str) {}
+
+    void checkServerTrusted(X509Certificate[] certificate, String str) {}
+  }
+  private final HostnameVerifier hostnameVerifier = new HostnameVerifier() {
+    @Override
+    boolean verify(String hostname, SSLSession session) {
+      return "localhost" == hostname
+    }
+  }
+
+  private TestHttpServer() {
+    internalServer = new Server()
+
+    TrustManager[] trustManagers = new TrustManager[1]
+    trustManagers[0] = trustManager
+    sslContext.init(null, trustManagers, null)
   }
 
   TestHttpServer start() {
@@ -59,10 +97,36 @@ class TestHttpServer implements AutoCloseable {
         def handlerList = new HandlerList()
         handlerList.handlers = handlers.configured
         internalServer.handler = handlerList
+
+        final HttpConfiguration httpConfiguration = new HttpConfiguration()
+
+        // HTTP
+        final ServerConnector http = new ServerConnector(internalServer,
+          new HttpConnectionFactory(httpConfiguration))
+        http.setHost('localhost')
+        http.setPort(0)
+        internalServer.addConnector(http)
+
+        // HTTPS
+        final SslContextFactory sslContextFactory = new SslContextFactory()
+        keystorePath = extractKeystoreToDisk(TestHttpServer.getResource("datadog.jks")).path
+        sslContextFactory.keyStorePath = keystorePath
+        sslContextFactory.keyStorePassword = "datadog"
+        final HttpConfiguration httpsConfiguration = new HttpConfiguration(httpConfiguration)
+        httpsConfiguration.addCustomizer(new SecureRequestCustomizer())
+        final ServerConnector https = new ServerConnector(internalServer,
+          new SslConnectionFactory(sslContextFactory, HttpVersion.HTTP_1_1.asString()),
+          new HttpConnectionFactory(httpsConfiguration))
+        https.setHost('localhost')
+        https.setPort(0)
+        internalServer.addConnector(https)
+
         internalServer.start()
         // set after starting, otherwise two callbacks get added.
         internalServer.stopAtShutdown = true
-        address = new URI("http://localhost:${internalServer.connectors[0].localPort}")
+
+        address = new URI("http://localhost:${http.localPort}")
+        secureAddress = new URI("https://localhost:${https.localPort}")
       }
       long startTime = System.nanoTime()
       long rem = TimeUnit.SECONDS.toMillis(5)
@@ -75,13 +139,33 @@ class TestHttpServer implements AutoCloseable {
         rem -= TimeUnit.NANOSECONDS.toMillis(endTime - startTime)
         startTime = endTime
       }
-      System.out.println("Started server $this on port ${address.port}")
+      System.out.println("Started server $this on ${address} and  ${secureAddress}")
     }
     return this
   }
 
+  private File extractKeystoreToDisk(URL internalFile) {
+    InputStream inputStream = internalFile.openStream()
+    File tempFile = File.createTempFile("datadog", ".jks")
+    tempFile.deleteOnExit()
+
+    OutputStream out = new FileOutputStream(tempFile)
+
+    byte[] buffer = new byte[1024]
+    int len = inputStream.read(buffer)
+    while (len != -1) {
+      out.write(buffer, 0, len)
+      len = inputStream.read(buffer)
+    }
+
+    inputStream.close()
+    out.close()
+
+    return tempFile
+  }
+
   def stop() {
-    System.out.println("Stopping server $this on port ${address.port}")
+    System.out.println("Stopping server $this on ${address} and  ${secureAddress}")
     internalServer.stop()
     return this
   }
@@ -92,6 +176,18 @@ class TestHttpServer implements AutoCloseable {
 
   URI getAddress() {
     return address
+  }
+
+  URI getSecureAddress() {
+    return secureAddress
+  }
+
+  X509TrustManager getTrustManager() {
+    return trustManager
+  }
+
+  HostnameVerifier getHostnameVerifier() {
+    return hostnameVerifier
   }
 
   def getLastRequest() {
@@ -136,17 +232,21 @@ class TestHttpServer implements AutoCloseable {
 
     void get(String path, @DelegatesTo(value = HandlerApi, strategy = Closure.DELEGATE_FIRST) Closure<Void> spec) {
       assert path != null
-      configured << new HandlerSpec(HttpMethods.GET, path, spec)
+      configured << new HandlerSpec(GET, path, spec)
     }
 
     void post(String path, @DelegatesTo(value = HandlerApi, strategy = Closure.DELEGATE_FIRST) Closure<Void> spec) {
       assert path != null
-      configured << new HandlerSpec(HttpMethods.POST, path, spec)
+      configured << new HandlerSpec(POST, path, spec)
     }
 
     void put(String path, @DelegatesTo(value = HandlerApi, strategy = Closure.DELEGATE_FIRST) Closure<Void> spec) {
       assert path != null
-      configured << new HandlerSpec(HttpMethods.PUT, path, spec)
+      configured << new HandlerSpec(PUT, path, spec)
+    }
+
+    void connect(@DelegatesTo(value = HandlerApi, strategy = Closure.DELEGATE_FIRST) Closure<Void> spec) {
+      configured << new MethodSpec(CONNECT, spec)
     }
 
     void prefix(String path, @DelegatesTo(value = HandlerApi, strategy = Closure.DELEGATE_FIRST) Closure<Void> spec) {
@@ -158,21 +258,36 @@ class TestHttpServer implements AutoCloseable {
     }
   }
 
-  private class HandlerSpec extends AllHandlerSpec {
+  private class MethodSpec extends AllHandlerSpec {
 
     private final String method
+
+    protected MethodSpec(HttpMethod method, Closure<Void> spec) {
+      super(spec)
+      this.method = method.name()
+    }
+
+    @Override
+    void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) throws IOException, ServletException {
+      if (request.method == method) {
+        super.handle(target, baseRequest, request, response)
+      }
+    }
+  }
+
+  private class HandlerSpec extends MethodSpec {
+
     private final String path
 
-    private HandlerSpec(String method, String path, Closure<Void> spec) {
-      super(spec)
-      this.method = method
+    protected HandlerSpec(HttpMethod method, String path, Closure<Void> spec) {
+      super(method, spec)
       this.path = path.startsWith("/") ? path : "/" + path
     }
 
     @Override
     void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) throws IOException, ServletException {
-      if (request.method == method && target == path) {
-        send(baseRequest, response)
+      if (target == path) {
+        super.handle(target, baseRequest, request, response)
       }
     }
   }
@@ -181,7 +296,7 @@ class TestHttpServer implements AutoCloseable {
 
     private final String prefix
 
-    private PrefixHandlerSpec(String prefix, Closure<Void> spec) {
+    protected PrefixHandlerSpec(String prefix, Closure<Void> spec) {
       super(spec)
       this.prefix = prefix.startsWith("/") ? prefix : "/" + prefix
     }
@@ -189,7 +304,7 @@ class TestHttpServer implements AutoCloseable {
     @Override
     void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) throws IOException, ServletException {
       if (target.startsWith(prefix)) {
-        send(baseRequest, response)
+        super.handle(target, baseRequest, request, response)
       }
     }
   }
@@ -218,21 +333,22 @@ class TestHttpServer implements AutoCloseable {
         clone(api)
       } catch (Exception e) {
         api.response.status(500).send(e.getMessage())
+        e.printStackTrace()
       }
     }
   }
 
-  class HandlerApi {
-    private final Request req
+  static class HandlerApi {
+    private final RequestApi req
     private final HttpServletResponse resp
 
     private HandlerApi(Request request, HttpServletResponse response) {
-      this.req = request
+      this.req = new RequestApi(request)
       this.resp = response
     }
 
     def getRequest() {
-      return new RequestApi()
+      return req
     }
 
 
@@ -242,7 +358,7 @@ class TestHttpServer implements AutoCloseable {
 
     void redirect(String uri) {
       resp.sendRedirect(uri)
-      req.handled = true
+      req.orig.handled = true
     }
 
     void handleDistributedRequest() {
@@ -251,7 +367,7 @@ class TestHttpServer implements AutoCloseable {
         isDDServer = Boolean.parseBoolean(request.getHeader("is-dd-server"))
       }
       if (isDDServer) {
-        final AgentSpan.Context extractedContext = propagate().extract(req, GETTER)
+        final AgentSpan.Context extractedContext = propagate().extract(req.orig, GETTER)
         if (extractedContext != null) {
           startSpan("test-http-server", extractedContext)
             .setTag("path", request.path)
@@ -264,13 +380,22 @@ class TestHttpServer implements AutoCloseable {
       }
     }
 
-    class RequestApi {
-      def path = req.pathInfo
-      def headers = new Headers(req)
-      def contentLength = req.contentLength
-      def contentType = req.contentType?.split(";")
+    static class RequestApi {
+      final orig
+      final path
+      final Headers headers
+      final contentLength
+      final contentType
+      final byte[] body
 
-      def body = req.inputStream.bytes
+      RequestApi(Request req) {
+        this.orig = req
+        this.path = req.pathInfo
+        this.headers = new Headers(req)
+        this.contentLength = req.contentLength
+        this.contentType = req.contentType?.split(";")
+        this.body = req.inputStream.bytes
+      }
 
       def getPath() {
         return path
@@ -310,10 +435,10 @@ class TestHttpServer implements AutoCloseable {
       }
 
       void send() {
-        assert !req.handled
-        req.contentType = "text/plain;charset=utf-8"
+        assert !req.orig.handled
+        req.orig.contentType = "text/plain;charset=utf-8"
         resp.status = status
-        req.handled = true
+        req.orig.handled = true
       }
 
       void send(String body) {
@@ -324,20 +449,20 @@ class TestHttpServer implements AutoCloseable {
         resp.writer.print(body)
       }
     }
+  }
 
-    static class Headers {
-      private final Map<String, String> headers
+  static class Headers {
+    private final Map<String, String> headers
 
-      private Headers(Request request) {
-        this.headers = [:]
-        request.getHeaderNames().each {
-          headers.put(it, request.getHeader(it))
-        }
+    private Headers(Request request) {
+      this.headers = [:]
+      request.getHeaderNames().each {
+        headers.put(it, request.getHeader(it))
       }
+    }
 
-      def get(String header) {
-        return headers[header]
-      }
+    def get(String header) {
+      return headers[header]
     }
   }
 }

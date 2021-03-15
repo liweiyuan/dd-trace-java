@@ -17,6 +17,7 @@ import java.util.function.Supplier
 
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.ERROR
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.EXCEPTION
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.FORWARDED
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.QUERY_PARAM
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.REDIRECT
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.SUCCESS
@@ -27,30 +28,35 @@ class PlayServerTest extends HttpServerTest<Server> {
     return Server.forRouter(Mode.TEST, port) { BuiltInComponents components ->
       RoutingDsl.fromComponents(components)
         .GET(SUCCESS.getPath()).routeTo({
-        controller(SUCCESS) {
-          Results.status(SUCCESS.getStatus(), SUCCESS.getBody())
-        }
-      } as Supplier)
+          controller(SUCCESS) {
+            Results.status(SUCCESS.getStatus(), SUCCESS.getBody())
+          }
+        } as Supplier)
+        .GET(FORWARDED.getPath()).routeTo({
+          controller(FORWARDED) {
+            Results.status(FORWARDED.getStatus(), FORWARDED.getBody()) // cheating
+          }
+        } as Supplier)
         .GET(QUERY_PARAM.getPath()).routeTo({
-        controller(QUERY_PARAM) {
-          Results.status(QUERY_PARAM.getStatus(), QUERY_PARAM.getBody())
-        }
-      } as Supplier)
+          controller(QUERY_PARAM) {
+            Results.status(QUERY_PARAM.getStatus(), QUERY_PARAM.getBody()) // cheating
+          }
+        } as Supplier)
         .GET(REDIRECT.getPath()).routeTo({
-        controller(REDIRECT) {
-          Results.found(REDIRECT.getBody())
-        }
-      } as Supplier)
+          controller(REDIRECT) {
+            Results.found(REDIRECT.getBody())
+          }
+        } as Supplier)
         .GET(ERROR.getPath()).routeTo({
-        controller(ERROR) {
-          Results.status(ERROR.getStatus(), ERROR.getBody())
-        }
-      } as Supplier)
+          controller(ERROR) {
+            Results.status(ERROR.getStatus(), ERROR.getBody())
+          }
+        } as Supplier)
         .GET(EXCEPTION.getPath()).routeTo({
-        controller(EXCEPTION) {
-          throw new Exception(EXCEPTION.getBody())
-        }
-      } as Supplier)
+          controller(EXCEPTION) {
+            throw new Exception(EXCEPTION.getBody())
+          }
+        } as Supplier)
         .build()
     }
   }
@@ -91,7 +97,7 @@ class PlayServerTest extends HttpServerTest<Server> {
       tags {
         "$Tags.COMPONENT" PlayHttpServerDecorator.DECORATE.component()
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
-        "$Tags.PEER_HOST_IPV4" { it == null || it == "127.0.0.1" } // Optional
+        "$Tags.PEER_HOST_IPV4" { endpoint == FORWARDED ? it == endpoint.body : (it == null || it == "127.0.0.1") }
         "$Tags.HTTP_URL" String
         "$Tags.HTTP_METHOD" String
         "$Tags.HTTP_STATUS" Integer
@@ -122,6 +128,7 @@ class PlayServerTest extends HttpServerTest<Server> {
       tags {
         "$Tags.COMPONENT" component
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
+        "$Tags.PEER_HOST_IPV4" { endpoint == FORWARDED ? it == endpoint.body : (it == null || it == "127.0.0.1") }
         "$Tags.HTTP_STATUS" endpoint.status
         "$Tags.HTTP_URL" "${endpoint.resolve(address)}"
         "$Tags.HTTP_METHOD" method

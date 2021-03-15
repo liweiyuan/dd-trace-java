@@ -1,10 +1,13 @@
 package datadog.trace.util;
 
 import java.util.concurrent.ThreadFactory;
+import org.slf4j.LoggerFactory;
 
 /** A {@link ThreadFactory} implementation that starts all agent {@link Thread}s as daemons. */
 public final class AgentThreadFactory implements ThreadFactory {
   public static final ThreadGroup AGENT_THREAD_GROUP = new ThreadGroup("dd-trace-java");
+
+  public static final long THREAD_JOIN_TIMOUT_MS = 800;
 
   // known agent threads
   public enum AgentThread {
@@ -57,6 +60,14 @@ public final class AgentThreadFactory implements ThreadFactory {
     final Thread thread = new Thread(AGENT_THREAD_GROUP, runnable, agentThread.threadName);
     thread.setDaemon(true);
     thread.setContextClassLoader(null);
+    thread.setUncaughtExceptionHandler(
+        new Thread.UncaughtExceptionHandler() {
+          @Override
+          public void uncaughtException(final Thread thread, final Throwable e) {
+            LoggerFactory.getLogger(runnable.getClass())
+                .error("Uncaught exception in {}", agentThread.threadName, e);
+          }
+        });
     return thread;
   }
 }

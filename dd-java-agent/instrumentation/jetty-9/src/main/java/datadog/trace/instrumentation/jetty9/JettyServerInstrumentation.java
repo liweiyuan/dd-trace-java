@@ -14,9 +14,7 @@ import static net.bytebuddy.matcher.ElementMatchers.takesNoArguments;
 
 import com.google.auto.service.AutoService;
 import datadog.trace.agent.tooling.Instrumenter;
-import datadog.trace.api.Config;
 import datadog.trace.api.CorrelationIdentifier;
-import datadog.trace.api.DDTags;
 import datadog.trace.api.GlobalTracer;
 import datadog.trace.bootstrap.instrumentation.api.AgentScope;
 import datadog.trace.bootstrap.instrumentation.api.AgentSpan;
@@ -28,7 +26,6 @@ import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.matcher.ElementMatcher;
 import org.eclipse.jetty.server.HttpChannel;
 import org.eclipse.jetty.server.Request;
-import org.eclipse.jetty.server.Response;
 
 @AutoService(Instrumenter.class)
 public final class JettyServerInstrumentation extends Instrumenter.Tracing {
@@ -92,12 +89,11 @@ public final class JettyServerInstrumentation extends Instrumenter.Tracing {
         return activateSpan((AgentSpan) existingSpan);
       }
 
-      final AgentSpan.Context extractedContext = propagate().extract(req, GETTER);
+      final AgentSpan.Context.Extracted extractedContext = propagate().extract(req, GETTER);
 
       final AgentSpan span = startSpan(SERVLET_REQUEST, extractedContext).setMeasured(true);
       DECORATE.afterStart(span);
-      DECORATE.onConnection(span, req);
-      DECORATE.onRequest(span, req);
+      DECORATE.onRequest(span, req, req, extractedContext);
 
       final AgentScope scope = activateSpan(span);
       scope.setAsyncPropagation(true);
@@ -121,16 +117,10 @@ public final class JettyServerInstrumentation extends Instrumenter.Tracing {
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void stopSpan(@Advice.This final HttpChannel<?> channel) {
       Request req = channel.getRequest();
-      Response resp = channel.getResponse();
-
       Object spanObj = req.getAttribute(DD_SPAN_ATTRIBUTE);
       if (spanObj instanceof AgentSpan) {
         final AgentSpan span = (AgentSpan) spanObj;
-
-        if (Config.get().isServletPrincipalEnabled() && req.getUserPrincipal() != null) {
-          span.setTag(DDTags.USER_NAME, req.getUserPrincipal().getName());
-        }
-        DECORATE.onResponse(span, resp);
+        DECORATE.onResponse(span, channel);
         DECORATE.beforeFinish(span);
         span.finish();
       }

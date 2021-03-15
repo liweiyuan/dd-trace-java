@@ -2,6 +2,7 @@ package datadog.trace.agent.test.base
 
 import datadog.trace.agent.test.AgentTestRunner
 import datadog.trace.agent.test.asserts.TraceAssert
+import datadog.trace.agent.test.server.http.HttpProxy
 import datadog.trace.api.DDSpanTypes
 import datadog.trace.api.DDTags
 import datadog.trace.bootstrap.instrumentation.api.Tags
@@ -12,6 +13,7 @@ import spock.lang.Shared
 import spock.lang.Unroll
 
 import java.util.concurrent.ExecutionException
+import java.util.concurrent.TimeUnit
 
 import static datadog.trace.agent.test.server.http.TestHttpServer.httpServer
 import static datadog.trace.agent.test.utils.PortUtils.UNUSABLE_PORT
@@ -24,9 +26,9 @@ import static org.junit.Assume.assumeTrue
 @Unroll
 abstract class HttpClientTest extends AgentTestRunner {
   protected static final BODY_METHODS = ["POST", "PUT"]
-  protected static final CONNECT_TIMEOUT_MS = 1000
-  protected static final READ_TIMEOUT_MS = 2000
-  protected static final BASIC_AUTH_KEY = "custom authorization header"
+  protected static final int CONNECT_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(3) as int
+  protected static final int READ_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(5) as int
+  protected static final BASIC_AUTH_KEY = "custom_authorization_header"
   protected static final BASIC_AUTH_VAL = "plain text auth token"
 
   @AutoCleanup
@@ -70,15 +72,48 @@ abstract class HttpClientTest extends AgentTestRunner {
     }
   }
 
+  @AutoCleanup
+  @Shared
+  def proxy = new HttpProxy()
+
+  @Shared
+  ProxySelector proxySelector
+
   @Shared
   String component = component()
+
+  def setupSpec() {
+    List<Proxy> proxyList = Collections.singletonList(new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxy.port)))
+    proxySelector = new ProxySelector() {
+        @Override
+        List<Proxy> select(URI uri) {
+          if (uri.fragment == "proxy") {
+            return proxyList
+          }
+          return getDefault().select(uri)
+        }
+
+        @Override
+        void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
+          getDefault().connectFailed(uri, sa, ioe)
+        }
+      }
+  }
 
   /**
    * Make the request and return the status code response
    * @param method
    * @return
    */
-  abstract int doRequest(String method, URI uri, Map<String, String> headers = [:], Closure callback = null)
+  abstract int doRequest(String method, URI uri, Map<String, String> headers = [:], String body = "", Closure callback = null)
+
+  String keyStorePath() {
+    server.keystorePath
+  }
+
+  static String keyStorePassword() {
+    "datadog"
+  }
 
   abstract CharSequence component()
 
@@ -113,10 +148,70 @@ abstract class HttpClientTest extends AgentTestRunner {
     url = server.address.resolve(path)
   }
 
+  // IBM JVM has different protocol support for TLS
+  @Requires({ !System.getProperty("java.vm.name").contains("IBM J9 VM") })
+  def "basic secure #method request"() {
+    given:
+    assumeTrue(testSecure())
+
+    when:
+    def status = doRequest(method, url)
+
+    then:
+    status == 200
+    assertTraces(2) {
+      trace(size(1)) {
+        clientSpan(it, null, method, false, false, url)
+      }
+      server.distributedRequestTrace(it, trace(0).last())
+    }
+
+    where:
+    method | _
+    "GET"  | _
+    "POST" | _
+
+    path = "/success"
+    url = server.secureAddress.resolve(path)
+  }
+
+  // IBM JVM has different protocol support for TLS
+  @Requires({ !System.getProperty("java.vm.name").contains("IBM J9 VM") })
+  def "secure #method proxied request"() {
+    given:
+    assumeTrue(testSecure() && testProxy())
+
+    when:
+    def status = runUnderTrace("parent") {
+      doRequest(method, url, [:], body)
+    }
+    println("RESPONSE: $status")
+
+    then:
+    status == 200
+    TEST_WRITER
+    assertTraces(2) {
+      def remoteParentSpan = null
+      trace(size(3)) {
+        sortSpansByStart()
+        remoteParentSpan = span(2)
+        basicSpan(it, "parent")
+        clientSpan(it, span(0), "CONNECT", false, false, new URI("http://localhost:$server.secureAddress.port/"))
+        clientSpan(it, span(0), method, false, false, url)
+      }
+      server.distributedRequestTrace(it, remoteParentSpan)
+    }
+
+    where:
+    method << BODY_METHODS
+    url = server.secureAddress.resolve("/success#proxy") // fragment indicates the request should be proxied.
+    body = (1..10000).join(" ")
+  }
+
   def "basic #method request with parent"() {
     when:
     def status = runUnderTrace("parent") {
-      doRequest(method, server.address.resolve("/success"))
+      doRequest(method, server.address.resolve("/success"), [:], body)
     }
 
     then:
@@ -131,6 +226,7 @@ abstract class HttpClientTest extends AgentTestRunner {
 
     where:
     method << BODY_METHODS
+    body = (1..10000).join(" ")
   }
 
   //FIXME: add tests for POST with large/chunked data
@@ -181,7 +277,7 @@ abstract class HttpClientTest extends AgentTestRunner {
 
     when:
     def status = runUnderTrace("parent") {
-      doRequest(method, server.address.resolve("/success"), ["is-dd-server": "false"]) {
+      doRequest(method, server.address.resolve("/success"), ["is-dd-server": "false"], "") {
         runUnderTrace("child") {
           blockUntilChildSpansFinished(1)
         }
@@ -206,7 +302,7 @@ abstract class HttpClientTest extends AgentTestRunner {
 
   def "trace request with callback and no parent"() {
     when:
-    def status = doRequest(method, server.address.resolve("/success"), ["is-dd-server": "false"]) {
+    def status = doRequest(method, server.address.resolve("/success"), ["is-dd-server": "false"], "") {
       runUnderTrace("callback") {
         // FIXME: since in async we may not have the other trace report until the callback is done
         //  we should add a test method to detect that the other trace is finished but waiting for
@@ -364,31 +460,6 @@ abstract class HttpClientTest extends AgentTestRunner {
     method = "GET"
   }
 
-  def "connection error dropped request"() {
-    given:
-    assumeTrue(testRemoteConnection())
-    // https://stackoverflow.com/a/100859
-    def uri = new URI("http://www.google.com:81/")
-
-    when:
-    runUnderTrace("parent") {
-      doRequest(method, uri)
-    }
-
-    then:
-    def ex = thrown(Exception)
-    def thrownException = ex instanceof ExecutionException ? ex.cause : ex
-    assertTraces(1) {
-      trace(size(2)) {
-        basicSpan(it, "parent", null, thrownException)
-        clientSpan(it, span(0), method, false, false, uri, null, thrownException)
-      }
-    }
-
-    where:
-    method = "HEAD"
-  }
-
   def "connection error non routable address"() {
     given:
     assumeTrue(testRemoteConnection())
@@ -455,8 +526,8 @@ abstract class HttpClientTest extends AgentTestRunner {
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_CLIENT
         "$Tags.PEER_HOSTNAME" uri.host
         "$Tags.PEER_HOST_IPV4" { it == null || it == "127.0.0.1" } // Optional
-        "$Tags.PEER_PORT" uri.port > 0 ? uri.port : { it == null || it == 443 } // Optional
-        "$Tags.HTTP_URL" "${uri.resolve(uri.path)}"
+        "$Tags.PEER_PORT" { it == uri.port || it == proxy.port || it == 443 || it == null }
+        "$Tags.HTTP_URL" "${uri.resolve(uri.path)}" // remove fragment
         "$Tags.HTTP_METHOD" method
         if (status) {
           "$Tags.HTTP_STATUS" status
@@ -494,6 +565,20 @@ abstract class HttpClientTest extends AgentTestRunner {
 
   boolean testConnectionFailure() {
     true
+  }
+
+  /**
+   * Uses a local self-signed cert, so the client must be configured to ignore cert errors.
+   */
+  boolean testSecure() {
+    false
+  }
+
+  /**
+   * Client must be configured to use proxy iff url fragment is "proxy".
+   */
+  boolean testProxy() {
+    false
   }
 
   boolean testRemoteConnection() {

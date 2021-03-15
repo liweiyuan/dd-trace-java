@@ -21,10 +21,10 @@ import spock.lang.Unroll
 import javax.servlet.Servlet
 import javax.servlet.ServletException
 
+import static TestServlet3.SERVLET_TIMEOUT
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.CUSTOM_EXCEPTION
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.ERROR
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.EXCEPTION
-import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.NOT_FOUND
-import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.REDIRECT
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.SUCCESS
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.TIMEOUT
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.TIMEOUT_ERROR
@@ -54,13 +54,13 @@ abstract class TomcatServlet3Test extends AbstractServlet3Test<Tomcat, Context> 
     Context servletContext = tomcatServer.addWebapp("/$context", applicationDir.getAbsolutePath())
     // Speed up startup by disabling jar scanning:
     servletContext.getJarScanner().setJarScanFilter(new JarScanFilter() {
-      @Override
-      boolean check(JarScanType jarScanType, String jarName) {
-        return false
-      }
-    })
+        @Override
+        boolean check(JarScanType jarScanType, String jarName) {
+          return false
+        }
+      })
 
-//    setupAuthentication(tomcatServer, servletContext)
+    //    setupAuthentication(tomcatServer, servletContext)
     setupServlets(servletContext)
 
     (tomcatServer.host as StandardHost).errorReportValveClass = ErrorHandlerValve.name
@@ -79,6 +79,11 @@ abstract class TomcatServlet3Test extends AbstractServlet3Test<Tomcat, Context> 
   void stopServer(Tomcat server) {
     server.stop()
     server.destroy()
+  }
+
+  @Override
+  String component() {
+    return "tomcat-server"
   }
 
   @Override
@@ -107,7 +112,7 @@ abstract class TomcatServlet3Test extends AbstractServlet3Test<Tomcat, Context> 
       resourceName endpoint.status == 404 ? "404" : "$method ${endpoint.resolve(address).path}"
       spanType DDSpanTypes.HTTP_SERVER
       // Exceptions are always bubbled up, other statuses: only if bubblesResponse == true
-      errored((endpoint.errored && bubblesResponse && endpoint != TIMEOUT) || endpoint == EXCEPTION || endpoint == TIMEOUT_ERROR)
+      errored((endpoint.errored && bubblesResponse) || [EXCEPTION, CUSTOM_EXCEPTION, TIMEOUT_ERROR].contains(endpoint))
       if (parentID != null) {
         traceId traceID
         parentId parentID
@@ -117,15 +122,11 @@ abstract class TomcatServlet3Test extends AbstractServlet3Test<Tomcat, Context> 
       tags {
         "$Tags.COMPONENT" component
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
-        "$Tags.PEER_HOST_IPV4" { it == null || it == "127.0.0.1" } // Optional
+        "$Tags.PEER_HOST_IPV4" { endpoint == ServerEndpoint.FORWARDED ? it == endpoint.body : (it == null || it == "127.0.0.1") }
         "$Tags.PEER_PORT" Integer
         "$Tags.HTTP_URL" "${endpoint.resolve(address)}"
         "$Tags.HTTP_METHOD" method
-        if (endpoint != TIMEOUT && endpoint != TIMEOUT_ERROR) {
-          "$Tags.HTTP_STATUS" { it == endpoint.status || !bubblesResponse }
-        } else {
-          "timeout" 1_000
-        }
+        "$Tags.HTTP_STATUS" { it == endpoint.status || !bubblesResponse }
         if (context) {
           "servlet.context" "/$context"
         }
@@ -136,10 +137,11 @@ abstract class TomcatServlet3Test extends AbstractServlet3Test<Tomcat, Context> 
           "servlet.path" endpoint.path
         }
 
-        if (endpoint.errored) {
-          "error.msg" { it == null || it == EXCEPTION.body }
-          "error.type" { it == null || it == Exception.name }
-          "error.stack" { it == null || it instanceof String }
+        if (endpoint.throwsException) {
+          // Exception classes get wrapped in ServletException
+          "error.msg" { endpoint == EXCEPTION ? "Servlet execution threw an exception" : it == endpoint.body }
+          "error.type" { it == ServletException.name || it == InputMismatchException.name }
+          "error.stack" String
         }
         if (endpoint.query) {
           "$DDTags.HTTP_QUERY" endpoint.query
@@ -154,23 +156,21 @@ abstract class TomcatServlet3Test extends AbstractServlet3Test<Tomcat, Context> 
       serviceName expectedServiceName()
       operationName "servlet.dispatch"
       resourceName endpoint.path
-      errored(endpoint.errored && endpoint != TIMEOUT)
+      errored(endpoint.throwsException || endpoint == TIMEOUT_ERROR)
       childOfPrevious()
       tags {
         "$Tags.COMPONENT" AsyncDispatcherDecorator.DECORATE.component()
-        if (endpoint != TIMEOUT && endpoint != TIMEOUT_ERROR) {
-          "$Tags.HTTP_STATUS" endpoint.status
-        } else {
-          "timeout" 1_000
+        if (endpoint == TIMEOUT || endpoint == TIMEOUT_ERROR) {
+          "timeout" SERVLET_TIMEOUT
         }
         if (context) {
           "servlet.context" "/$context"
         }
         "servlet.path" "/dispatch$endpoint.path"
-        if (endpoint.errored) {
-          "error.msg" { it == null || it == EXCEPTION.body }
-          "error.type" { it == null || it == Exception.name }
-          "error.stack" { it == null || it instanceof String }
+        if (endpoint.throwsException) {
+          "error.msg" endpoint.body
+          "error.type" { it == Exception.name || it == InputMismatchException.name }
+          "error.stack" String
         }
         defaultTags()
       }
@@ -255,51 +255,61 @@ abstract class TomcatServlet3Test extends AbstractServlet3Test<Tomcat, Context> 
   }
 
   // FIXME: Add authentication tests back in...
-//  private setupAuthentication(Tomcat server, Context servletContext) {
-//    // Login Config
-//    LoginConfig authConfig = new LoginConfig()
-//    authConfig.setAuthMethod("BASIC")
-//
-//    // adding constraint with role "test"
-//    SecurityConstraint constraint = new SecurityConstraint()
-//    constraint.addAuthRole("role")
-//
-//    // add constraint to a collection with pattern /second
-//    SecurityCollection collection = new SecurityCollection()
-//    collection.addPattern("/auth/*")
-//    constraint.addCollection(collection)
-//
-//    servletContext.setLoginConfig(authConfig)
-//    // does the context need a auth role too?
-//    servletContext.addSecurityRole("role")
-//    servletContext.addConstraint(constraint)
-//
-//    // add tomcat users to realm
-//    MemoryRealm realm = new MemoryRealm() {
-//      protected void startInternal() {
-//        credentialHandler = new MessageDigestCredentialHandler()
-//        setState(LifecycleState.STARTING)
-//      }
-//    }
-//    realm.addUser(user, pass, "role")
-//    server.getEngine().setRealm(realm)
-//
-//    servletContext.setLoginConfig(authConfig)
-//  }
+  //  private setupAuthentication(Tomcat server, Context servletContext) {
+  //    // Login Config
+  //    LoginConfig authConfig = new LoginConfig()
+  //    authConfig.setAuthMethod("BASIC")
+  //
+  //    // adding constraint with role "test"
+  //    SecurityConstraint constraint = new SecurityConstraint()
+  //    constraint.addAuthRole("role")
+  //
+  //    // add constraint to a collection with pattern /second
+  //    SecurityCollection collection = new SecurityCollection()
+  //    collection.addPattern("/auth/*")
+  //    constraint.addCollection(collection)
+  //
+  //    servletContext.setLoginConfig(authConfig)
+  //    // does the context need a auth role too?
+  //    servletContext.addSecurityRole("role")
+  //    servletContext.addConstraint(constraint)
+  //
+  //    // add tomcat users to realm
+  //    MemoryRealm realm = new MemoryRealm() {
+  //      protected void startInternal() {
+  //        credentialHandler = new MessageDigestCredentialHandler()
+  //        setState(LifecycleState.STARTING)
+  //      }
+  //    }
+  //    realm.addUser(user, pass, "role")
+  //    server.getEngine().setRealm(realm)
+  //
+  //    servletContext.setLoginConfig(authConfig)
+  //  }
 }
 
 class ErrorHandlerValve extends ErrorReportValve {
   @Override
   protected void report(Request request, Response response, Throwable t) {
-    if (response.getStatus() < 400 || response.getContentWritten() > 0 || !response.setErrorReported()) {
+    if (!response.error) {
       return
     }
     try {
       if (t) {
-        response.writer.print(t.cause.message)
+        if (t instanceof ServletException) {
+          t = t.rootCause
+        }
+        while (t.cause != null) {
+          t = t.cause
+        }
+        if (t instanceof InputMismatchException) {
+          response.status = CUSTOM_EXCEPTION.status
+        }
+        response.reporter.write(t.message)
       } else if (response.message) {
-        response.writer.print(response.message)
+        response.reporter.write(response.message)
       }
+
     } catch (IOException e) {
       e.printStackTrace()
     }
@@ -353,9 +363,10 @@ class TomcatServlet3TestAsync extends TomcatServlet3Test {
     true
   }
 
-  boolean hasResponseSpan(ServerEndpoint endpoint) {
-    // No response spans for errors in async
-    return endpoint == REDIRECT || endpoint == NOT_FOUND
+  @Override
+  boolean testException() {
+    // The exception will just cause an async timeout
+    false
   }
 }
 
@@ -440,6 +451,11 @@ class TomcatServlet3TestDispatchImmediate extends TomcatServlet3Test {
   }
 
   @Override
+  boolean testException() {
+    false
+  }
+
+  @Override
   void handlerSpan(TraceAssert trace, ServerEndpoint endpoint = SUCCESS) {
     dispatchSpan(trace, endpoint)
   }
@@ -464,6 +480,11 @@ class TomcatServlet3TestDispatchAsync extends TomcatServlet3Test {
   }
 
   @Override
+  boolean testException() {
+    false
+  }
+
+  @Override
   boolean testTimeout() {
     true
   }
@@ -471,11 +492,6 @@ class TomcatServlet3TestDispatchAsync extends TomcatServlet3Test {
   @Override
   void handlerSpan(TraceAssert trace, ServerEndpoint endpoint = SUCCESS) {
     dispatchSpan(trace, endpoint)
-  }
-
-  boolean hasResponseSpan(ServerEndpoint endpoint) {
-    // No response spans for errors in async
-    return endpoint == REDIRECT || endpoint == NOT_FOUND
   }
 
   @Override

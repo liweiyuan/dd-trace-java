@@ -8,8 +8,7 @@ import net.spy.memcached.MemcachedConnection;
 
 public class MemcacheClientDecorator
     extends DBTypeProcessingDatabaseClientDecorator<MemcachedConnection> {
-  private static final CharSequence JAVA_SPYMEMCACHED =
-      UTF8BytesString.createConstant("java-spymemcached");
+  private static final CharSequence JAVA_SPYMEMCACHED = UTF8BytesString.create("java-spymemcached");
   public static final MemcacheClientDecorator DECORATE = new MemcacheClientDecorator();
 
   @Override
@@ -54,17 +53,13 @@ public class MemcacheClientDecorator
 
   public AgentSpan onOperation(final AgentSpan span, final String methodName) {
 
-    final char[] chars =
-        methodName
-            .replaceFirst("^async", "")
-            // 'CAS' name is special, we have to lowercase whole name
-            .replaceFirst("^CAS", "cas")
-            .toCharArray();
+    // optimization over string.replaceFirst()
+    StringBuilder builder = new StringBuilder(methodName);
+    if (builder.indexOf("async") == 0) builder.delete(0, "async".length());
+    if (builder.indexOf("CAS") == 0) builder.replace(0, "CAS".length(), "cas");
+    builder.replace(0, 1, String.valueOf(Character.toLowerCase(builder.charAt(0))));
 
-    // Lowercase first letter
-    chars[0] = Character.toLowerCase(chars[0]);
-
-    span.setResourceName(new String(chars));
+    span.setResourceName(builder.toString());
     return span;
   }
 }

@@ -1,11 +1,11 @@
 plugins {
-  id "com.github.johnrengelman.shadow" version "4.0.4"
+  id "com.github.johnrengelman.shadow"
 }
 
 ext {
   minJavaVersionForTests = JavaVersion.VERSION_11
-  // Zulu has backported profiling support
-  forceJdk = ['ZULU8']
+  // Oracle 8 has JFR 1 and Zulu has backported JFR 2
+  forceJdk = ['ZULU8', 'ORACLE8']
 }
 
 apply from: "$rootDir/gradle/java.gradle"

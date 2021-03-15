@@ -41,15 +41,29 @@ public class Tags {
   public static final String CI_PIPELINE_NAME = "ci.pipeline.name";
   public static final String CI_PIPELINE_NUMBER = "ci.pipeline.number";
   public static final String CI_PIPELINE_URL = "ci.pipeline.url";
+  public static final String CI_STAGE_NAME = "ci.stage.name";
+  public static final String CI_JOB_NAME = "ci.job.name";
   public static final String CI_JOB_URL = "ci.job.url";
   public static final String CI_WORKSPACE_PATH = "ci.workspace_path";
-  public static final String BUILD_SOURCE_ROOT = "build.source_root";
 
   public static final String GIT_REPOSITORY_URL = "git.repository_url";
   public static final String GIT_COMMIT_SHA = "git.commit.sha";
-  @Deprecated public static final String _GIT_COMMIT_SHA = "git.commit_sha";
+  public static final String GIT_COMMIT_AUTHOR_NAME = "git.commit.author.name";
+  public static final String GIT_COMMIT_AUTHOR_EMAIL = "git.commit.author.email";
+  public static final String GIT_COMMIT_AUTHOR_DATE = "git.commit.author.date";
+  public static final String GIT_COMMIT_COMMITTER_NAME = "git.commit.committer.name";
+  public static final String GIT_COMMIT_COMMITTER_EMAIL = "git.commit.committer.email";
+  public static final String GIT_COMMIT_COMMITTER_DATE = "git.commit.committer.date";
+  public static final String GIT_COMMIT_MESSAGE = "git.commit.message";
   public static final String GIT_BRANCH = "git.branch";
   public static final String GIT_TAG = "git.tag";
+
+  public static final String RUNTIME_NAME = "runtime.name";
+  public static final String RUNTIME_VENDOR = "runtime.vendor";
+  public static final String RUNTIME_VERSION = "runtime.version";
+  public static final String OS_ARCHITECTURE = "os.architecture";
+  public static final String OS_PLATFORM = "os.platform";
+  public static final String OS_VERSION = "os.version";
 
   public static final String DD_SERVICE = "dd.service";
   public static final String DD_VERSION = "dd.version";

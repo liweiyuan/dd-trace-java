@@ -16,7 +16,6 @@ import static net.bytebuddy.matcher.ElementMatchers.not;
 import static net.bytebuddy.matcher.ElementMatchers.returns;
 
 import com.google.auto.service.AutoService;
-import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.twilio.Twilio;
@@ -61,7 +60,8 @@ public class TwilioAsyncInstrumentation extends Instrumenter.Tracing {
   public String[] helperClassNames() {
     return new String[] {
       packageName + ".TwilioClientDecorator",
-      packageName + ".TwilioAsyncInstrumentation$SpanFinishingCallback",
+      packageName + ".TwilioClientDecorator$1",
+      packageName + ".SpanFinishingCallback",
     };
   }
 
@@ -144,34 +144,6 @@ public class TwilioAsyncInstrumentation extends Instrumenter.Tracing {
         // span finished in SpanFinishingCallback
         CallDepthThreadLocalMap.reset(Twilio.class); // reset call depth count
       }
-    }
-  }
-
-  /**
-   * FutureCallback, which automatically finishes the span and annotates with any appropriate
-   * metadata on a potential failure.
-   */
-  public static class SpanFinishingCallback implements FutureCallback {
-
-    /** Span that we should finish and annotate when the future is complete. */
-    private final AgentSpan span;
-
-    public SpanFinishingCallback(final AgentSpan span) {
-      this.span = span;
-    }
-
-    @Override
-    public void onSuccess(final Object result) {
-      DECORATE.beforeFinish(span);
-      DECORATE.onResult(span, result);
-      span.finish();
-    }
-
-    @Override
-    public void onFailure(final Throwable t) {
-      DECORATE.onError(span, t);
-      DECORATE.beforeFinish(span);
-      span.finish();
     }
   }
 }

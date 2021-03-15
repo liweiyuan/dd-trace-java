@@ -17,7 +17,7 @@ class HttpServerDecoratorTest extends ServerDecoratorTest {
     def decorator = newDecorator()
 
     when:
-    decorator.onRequest(span, req)
+    decorator.onRequest(span, null, req, null)
 
     then:
     if (req) {
@@ -42,7 +42,7 @@ class HttpServerDecoratorTest extends ServerDecoratorTest {
     def decorator = newDecorator()
 
     when:
-    decorator.onRequest(span, req)
+    decorator.onRequest(span, null, req, null)
 
     then:
     if (expectedUrl) {
@@ -76,12 +76,15 @@ class HttpServerDecoratorTest extends ServerDecoratorTest {
 
   def "test onConnection"() {
     setup:
+    def ctx = Mock(AgentSpan.Context.Extracted)
     def decorator = newDecorator()
 
     when:
-    decorator.onConnection(span, conn)
+    decorator.onRequest(span, conn, null, ctx)
 
     then:
+    1 * ctx.getForwardedFor() >> null
+    1 * ctx.getForwardedPort() >> null
     if (conn) {
       1 * span.setTag(Tags.PEER_PORT, 555)
       if (ipv4) {
@@ -90,6 +93,20 @@ class HttpServerDecoratorTest extends ServerDecoratorTest {
         1 * span.setTag(Tags.PEER_HOST_IPV6, "3ffe:1900:4545:3:200:f8ff:fe21:67cf")
       }
     }
+    0 * _
+
+    when:
+    decorator.onRequest(span, conn, null, ctx)
+
+    then:
+    1 * ctx.getForwardedFor() >> (ipv4 ? "10.1.1.1" : "0::1")
+    1 * ctx.getForwardedPort() >> "123"
+    if (ipv4) {
+      1 * span.setTag(Tags.PEER_HOST_IPV4, "10.1.1.1")
+    } else {
+      1 * span.setTag(Tags.PEER_HOST_IPV6, "0::1")
+    }
+    1 * span.setTag(Tags.PEER_PORT, "123")
     0 * _
 
     where:
@@ -117,56 +134,56 @@ class HttpServerDecoratorTest extends ServerDecoratorTest {
     0 * _
 
     where:
-    status | resp            | error
-    200    | [status: 200]   | false
-    399    | [status: 399]   | false
-    400    | [status: 400]   | false
-    404    | [status: 404]   | false
-    404    | [status: 404]   | false
-    499    | [status: 499]   | false
-    500    | [status: 500]   | true
-    600    | [status: 600]   | false
-    null   | [status: null]  | false
-    null   | null            | false
+    status | resp           | error
+    200    | [status: 200]  | false
+    399    | [status: 399]  | false
+    400    | [status: 400]  | false
+    404    | [status: 404]  | false
+    404    | [status: 404]  | false
+    499    | [status: 499]  | false
+    500    | [status: 500]  | true
+    600    | [status: 600]  | false
+    null   | [status: null] | false
+    null   | null           | false
   }
 
   @Override
   def newDecorator() {
     return new HttpServerDecorator<Map, Map, Map>() {
-      @Override
-      protected String[] instrumentationNames() {
-        return ["test1", "test2"]
-      }
+        @Override
+        protected String[] instrumentationNames() {
+          return ["test1", "test2"]
+        }
 
-      @Override
-      protected CharSequence component() {
-        return "test-component"
-      }
+        @Override
+        protected CharSequence component() {
+          return "test-component"
+        }
 
-      @Override
-      protected String method(Map m) {
-        return m.method
-      }
+        @Override
+        protected String method(Map m) {
+          return m.method
+        }
 
-      @Override
-      protected URIDataAdapter url(Map m) {
-        return new DefaultURIDataAdapter(m.url)
-      }
+        @Override
+        protected URIDataAdapter url(Map m) {
+          return new DefaultURIDataAdapter(m.url)
+        }
 
-      @Override
-      protected String peerHostIP(Map m) {
-        return m.ip
-      }
+        @Override
+        protected String peerHostIP(Map m) {
+          return m.ip
+        }
 
-      @Override
-      protected int peerPort(Map m) {
-        return m.port == null ? 0 : m.port
-      }
+        @Override
+        protected int peerPort(Map m) {
+          return m.port == null ? 0 : m.port
+        }
 
-      @Override
-      protected int status(Map m) {
-        return m.status == null ? 0 : m.status
+        @Override
+        protected int status(Map m) {
+          return m.status == null ? 0 : m.status
+        }
       }
-    }
   }
 }

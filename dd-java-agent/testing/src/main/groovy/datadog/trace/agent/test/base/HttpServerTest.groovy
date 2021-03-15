@@ -16,8 +16,10 @@ import org.slf4j.LoggerFactory
 import spock.lang.Shared
 import spock.lang.Unroll
 
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.CUSTOM_EXCEPTION
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.ERROR
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.EXCEPTION
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.FORWARDED
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.NOT_FOUND
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.PATH_PARAM
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.QUERY_PARAM
@@ -74,7 +76,15 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
     false
   }
 
+  boolean testForwarded() {
+    true
+  }
+
   boolean testNotFound() {
+    true
+  }
+
+  boolean testRedirect() {
     true
   }
 
@@ -98,8 +108,10 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
   enum ServerEndpoint {
     SUCCESS("success", 200, "success"),
     REDIRECT("redirect", 302, "/redirected"),
+    FORWARDED("forwarded", 200, "1.2.3.4"),
     ERROR("error-status", 500, "controller error"), // "error" is a special path for some frameworks
     EXCEPTION("exception", 500, "controller exception"),
+    CUSTOM_EXCEPTION("custom-exception", 510, "custom exception"), // exception thrown with custom error
     NOT_FOUND("not-found", 404, "not found"),
     NOT_HERE("not-here", 404, "not here"), // Explicitly returned 404 from a valid controller
 
@@ -109,8 +121,8 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
     // TODO: add tests for the following cases:
     QUERY_PARAM("query?some=query", 200, "some=query"),
     // OkHttp never sends the fragment in the request, so these cases don't work.
-//    FRAGMENT_PARAM("fragment#some-fragment", 200, "some-fragment"),
-//    QUERY_FRAGMENT_PARAM("query/fragment?some=query#some-fragment", 200, "some=query#some-fragment"),
+    //    FRAGMENT_PARAM("fragment#some-fragment", 200, "some-fragment"),
+    //    QUERY_FRAGMENT_PARAM("query/fragment?some=query#some-fragment", 200, "some=query#some-fragment"),
     PATH_PARAM("path/123/param", 200, "123"),
     AUTH_REQUIRED("authRequired", 200, null),
     LOGIN("login", 302, null),
@@ -122,6 +134,7 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
     final int status
     final String body
     final Boolean errored
+    final Boolean throwsException
     final boolean hasPathParam
 
     ServerEndpoint(String uri, int status, String body) {
@@ -132,6 +145,7 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
       this.status = status
       this.body = body
       this.errored = status >= 500 || name().contains("ERROR")
+      this.throwsException = name().contains("EXCEPTION")
       this.hasPathParam = body == "123"
     }
 
@@ -151,7 +165,11 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
       return path == "not-found" ? "404" : "$method ${hasPathParam ? pathParam : resolve(address).path}"
     }
 
-    private static final Map<String, ServerEndpoint> PATH_MAP = values().collectEntries { [it.path, it] }
+    static {
+      assert values().length == values().collect { it.path }.toSet().size(): "paths should be unique"
+    }
+
+    private static final Map<String, ServerEndpoint> PATH_MAP = values().collectEntries { [it.path, it]}
 
     static ServerEndpoint forPath(String path) {
       def endpoint = PATH_MAP.get(path)
@@ -212,6 +230,36 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
     method = "GET"
     body = null
     count << [1, 4, 50] // make multiple requests.
+  }
+
+  def "test forwarded request"() {
+    setup:
+    assumeTrue(testForwarded())
+    def request = request(FORWARDED, method, body).header("x-forwarded-for", FORWARDED.body).build()
+    def response = client.newCall(request).execute()
+
+    expect:
+    response.code() == FORWARDED.status
+    response.body().string() == FORWARDED.body
+
+    and:
+    assertTraces(1) {
+      trace(spanCount(FORWARDED)) {
+        sortSpansByStart()
+        serverSpan(it, null, null, method, FORWARDED)
+        if (hasHandlerSpan()) {
+          handlerSpan(it, FORWARDED)
+        }
+        controllerSpan(it)
+        if (hasResponseSpan(FORWARDED)) {
+          responseSpan(it, FORWARDED)
+        }
+      }
+    }
+
+    where:
+    method = "GET"
+    body = null
   }
 
   def "test success with parent"() {
@@ -348,6 +396,7 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
 
   def "test redirect"() {
     setup:
+    assumeTrue(testRedirect())
     def request = request(REDIRECT, method, body).build()
     def response = client.newCall(request).execute()
 
@@ -355,7 +404,7 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
     if (bubblesResponse()) {
       assert response.code() == REDIRECT.status
       assert response.header("location") == REDIRECT.body ||
-        response.header("location") == "${address.resolve(REDIRECT.body)}"
+      response.header("location") == "${address.resolve(REDIRECT.body)}"
     }
 
     response.body().contentLength() < 1 || redirectHasBody()
@@ -431,7 +480,7 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
         if (hasHandlerSpan()) {
           handlerSpan(it, EXCEPTION)
         }
-        controllerSpan(it, EXCEPTION.body)
+        controllerSpan(it, EXCEPTION)
         if (hasResponseSpan(EXCEPTION)) {
           responseSpan(it, EXCEPTION)
         }
@@ -454,7 +503,8 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
 
     and:
     assertTraces(1) {
-      trace(spanCount(NOT_FOUND) - 1) { // no controller span
+      trace(spanCount(NOT_FOUND) - 1) {
+        // no controller span
         sortSpansByStart()
         serverSpan(it, null, null, method, NOT_FOUND)
         if (hasHandlerSpan()) {
@@ -540,7 +590,8 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
 
   //FIXME: add tests for POST with large/chunked data
 
-  void controllerSpan(TraceAssert trace, String errorMessage = null) {
+  void controllerSpan(TraceAssert trace, ServerEndpoint endpoint = null) {
+    def errorMessage = endpoint?.body
     trace.span {
       serviceName expectedServiceName()
       operationName "controller"
@@ -549,7 +600,7 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
       childOfPrevious()
       tags {
         if (errorMessage) {
-          errorTags(Exception, errorMessage)
+          errorTags(endpoint == CUSTOM_EXCEPTION ? InputMismatchException : Exception, errorMessage)
         }
         defaultTags()
       }
@@ -585,7 +636,7 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
         "$Tags.COMPONENT" component
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
         "$Tags.PEER_PORT" Integer
-        "$Tags.PEER_HOST_IPV4" { it == null || it == "127.0.0.1" } // Optional
+        "$Tags.PEER_HOST_IPV4" { endpoint == FORWARDED ? it == endpoint.body : (it == null || it == "127.0.0.1") }
         "$Tags.HTTP_URL" "${endpoint.resolve(address)}"
         "$Tags.HTTP_METHOD" method
         "$Tags.HTTP_STATUS" endpoint.status
@@ -593,9 +644,9 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
           "$DDTags.HTTP_QUERY" endpoint.query
         }
         // OkHttp never sends the fragment in the request.
-//        if (endpoint.fragment) {
-//          "$DDTags.HTTP_FRAGMENT" endpoint.fragment
-//        }
+        //        if (endpoint.fragment) {
+        //          "$DDTags.HTTP_FRAGMENT" endpoint.fragment
+        //        }
         defaultTags(true)
       }
       metrics {

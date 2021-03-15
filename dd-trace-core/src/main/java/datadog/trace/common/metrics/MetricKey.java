@@ -56,7 +56,10 @@ public final class MetricKey {
 
   @Override
   public boolean equals(Object o) {
-    try {
+    if (this == o) {
+      return true;
+    }
+    if ((o instanceof MetricKey)) {
       MetricKey metricKey = (MetricKey) o;
       return hash == metricKey.hash
           && httpStatusCode == metricKey.httpStatusCode
@@ -64,7 +67,6 @@ public final class MetricKey {
           && service.equals(metricKey.service)
           && operationName.equals(metricKey.operationName)
           && type.equals(metricKey.type);
-    } catch (ClassCastException unlikely) {
     }
     return false;
   }

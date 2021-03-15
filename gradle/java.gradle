@@ -4,13 +4,22 @@ apply plugin: 'java'
 apply plugin: 'groovy'
 
 apply from: "$rootDir/gradle/codenarc.gradle"
+apply from: "$rootDir/gradle/forbiddenapis.gradle"
 apply from: "$rootDir/gradle/spotless.gradle"
+apply from: "$rootDir/gradle/spotbugs.gradle"
 apply from: "$rootDir/gradle/repositories.gradle"
+
+def forkedTestLimit = gradle.sharedServices.registerIfAbsent("forkedTestLimit", BuildService) {
+  maxParallelUsages = 2
+}
 
 // Task for tests that want to run forked in their own separate JVM
 task forkedTest(type: Test) {
   setIncludes(["**/*ForkedTest*"])
+  jvmArgs += ["-Xms256M", "-Xmx256M"]
   forkEvery 1
+  // Limit the number of concurrent forked tests
+  usesService(forkedTestLimit)
 }
 
 test {
@@ -31,6 +40,14 @@ if (applyCodeCoverage) {
 
 sourceCompatibility = 1.7
 targetCompatibility = 1.7
+
+// when building with Java 9+, lazily set compiler --release flag to match target
+def skipSettingCompilerRelease = project.findProperty('skipSettingCompilerRelease')
+if (!skipSettingCompilerRelease && JavaVersion.current().isJava9Compatible()) {
+  compileJava.options.release = project.provider {
+    JavaVersion.toVersion(targetCompatibility).majorVersion as Integer
+  }
+}
 
 if (project.hasProperty('minJavaVersionForTests') && project.getProperty('minJavaVersionForTests') != JavaVersion.VERSION_1_7) {
   def version = JavaVersion.toVersion(project.getProperty('minJavaVersionForTests'))
@@ -372,12 +389,16 @@ tasks.withType(Test).configureEach {
     exclude "**/TestRepeated*"
     exclude "**/TestTemplate*"
     exclude "**/TestDisableTestTrace*"
+    exclude "**/TestAssumption*"
   }
 
   // Split up tests that want to run forked in their own separate JVM for generated tasks
-  if (name.startsWith("forkedTest")) {
+  if (name.startsWith("forkedTest") || name.endsWith("ForkedTest")) {
     setIncludes(["**/*ForkedTest*"])
+    jvmArgs += ["-Xms256M", "-Xmx256M"]
     forkEvery 1
+    // Limit the number of concurrent forked tests
+    usesService(forkedTestLimit)
   } else {
     exclude("**/*ForkedTest*")
   }

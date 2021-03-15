@@ -4,14 +4,13 @@ import datadog.trace.api.Config
 import datadog.trace.api.DDId
 import datadog.trace.api.sampling.PrioritySampling
 import datadog.trace.common.writer.ListWriter
-import datadog.trace.core.CoreTracer
 import datadog.trace.core.DDSpanContext
-import datadog.trace.test.util.DDSpecification
+import datadog.trace.core.test.DDCoreSpecification
 
 import static datadog.trace.api.PropagationStyle.B3
 import static datadog.trace.api.PropagationStyle.DATADOG
 
-class HttpInjectorTest extends DDSpecification {
+class HttpInjectorTest extends DDCoreSpecification {
 
   def "inject http headers"() {
     setup:
@@ -24,28 +23,27 @@ class HttpInjectorTest extends DDSpecification {
     def spanId = DDId.from(2)
 
     def writer = new ListWriter()
-    def tracer = CoreTracer.builder().writer(writer).build()
+    def tracer = tracerBuilder().writer(writer).build()
     final DDSpanContext mockedContext =
       new DDSpanContext(
-        traceId,
-        spanId,
-        DDId.ZERO,
-        null,
-        "fakeService",
-        "fakeOperation",
-        "fakeResource",
-        samplingPriority,
-        origin,
-        new HashMap<String, String>() {
-          {
-            put("k1", "v1")
-            put("k2", "v2")
-          }
-        },
-        false,
-        "fakeType",
-        0,
-        tracer.pendingTraceFactory.create(DDId.ONE))
+      traceId,
+      spanId,
+      DDId.ZERO,
+      null,
+      "fakeService",
+      "fakeOperation",
+      "fakeResource",
+      samplingPriority,
+      origin,
+      new HashMap<String, String>() { {
+          put("k1", "v1")
+          put("k2", "v2")
+        }
+      },
+      false,
+      "fakeType",
+      0,
+      tracer.pendingTraceFactory.create(DDId.ONE))
 
     final Map<String, String> carrier = Mock()
 
@@ -74,7 +72,11 @@ class HttpInjectorTest extends DDSpecification {
     }
     0 * _
 
+    cleanup:
+    tracer.close()
+
     where:
+    // spotless:off
     styles        | samplingPriority              | origin
     [DATADOG, B3] | PrioritySampling.UNSET        | null
     [DATADOG, B3] | PrioritySampling.SAMPLER_KEEP | "saipan"
@@ -83,5 +85,6 @@ class HttpInjectorTest extends DDSpecification {
     [B3]          | PrioritySampling.UNSET        | null
     [B3]          | PrioritySampling.SAMPLER_KEEP | "saipan"
     [B3, DATADOG] | PrioritySampling.SAMPLER_KEEP | "saipan"
+    // spotless:on
   }
 }

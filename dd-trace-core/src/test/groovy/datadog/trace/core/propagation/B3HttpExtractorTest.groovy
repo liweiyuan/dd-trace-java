@@ -17,6 +17,7 @@ class B3HttpExtractorTest extends DDSpecification {
   def "extract http headers"() {
     setup:
     def headers = [
+      ""                          : "empty key",
       (TRACE_ID_KEY.toUpperCase()): traceId.toString(16).toLowerCase(),
       (SPAN_ID_KEY.toUpperCase()) : spanId.toString(16).toLowerCase(),
       SOME_HEADER                 : "my-interesting-info",
@@ -92,6 +93,42 @@ class B3HttpExtractorTest extends DDSpecification {
     where:
     headers                              | _
     [SOME_HEADER: "my-interesting-info"] | _
+  }
+
+  def "extract headers with forwarding"() {
+    when:
+    TagContext context = extractor.extract(tagOnlyCtx, ContextVisitors.stringValuesMap())
+
+    then:
+    context != null
+    !(context instanceof ExtractedContext)
+    context.forwardedFor == forwardedFor
+    context.forwardedPort == forwardedPort
+
+    when:
+    context = extractor.extract(fullCtx, ContextVisitors.stringValuesMap())
+
+    then:
+    context instanceof ExtractedContext
+    context.traceId.toLong() == 1
+    context.spanId.toLong() == 2
+    context.forwardedFor == forwardedFor
+    context.forwardedFor == forwardedFor
+    context.forwardedPort == forwardedPort
+
+    where:
+    forwardedFor = "1.2.3.4"
+    forwardedPort = "1234"
+    tagOnlyCtx = [
+      "X-Forwarded-For" : forwardedFor,
+      "X-Forwarded-Port": forwardedPort
+    ]
+    fullCtx = [
+      (TRACE_ID_KEY.toUpperCase()): 1,
+      (SPAN_ID_KEY.toUpperCase()) : 2,
+      "x-forwarded-for"           : forwardedFor,
+      "x-forwarded-port"          : forwardedPort
+    ]
   }
 
   def "extract empty headers returns null"() {

@@ -4,6 +4,7 @@ import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.activateSp
 import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.propagate;
 import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.startSpan;
 import static datadog.trace.bootstrap.instrumentation.decorator.HttpServerDecorator.DD_SPAN_ATTRIBUTE;
+import static datadog.trace.bootstrap.instrumentation.decorator.HttpServerDecorator._500;
 import static datadog.trace.instrumentation.servlet2.HttpServletRequestExtractAdapter.GETTER;
 import static datadog.trace.instrumentation.servlet2.Servlet2Decorator.DECORATE;
 import static datadog.trace.instrumentation.servlet2.Servlet2Decorator.SERVLET_REQUEST;
@@ -47,13 +48,13 @@ public class Servlet2Advice {
       InstrumentationContext.get(ServletResponse.class, Integer.class).put(response, 200);
     }
 
-    final AgentSpan.Context extractedContext = propagate().extract(httpServletRequest, GETTER);
+    final AgentSpan.Context.Extracted extractedContext =
+        propagate().extract(httpServletRequest, GETTER);
 
     final AgentSpan span = startSpan(SERVLET_REQUEST, extractedContext).setMeasured(true);
 
     DECORATE.afterStart(span);
-    DECORATE.onConnection(span, httpServletRequest);
-    DECORATE.onRequest(span, httpServletRequest);
+    DECORATE.onRequest(span, httpServletRequest, httpServletRequest, extractedContext);
 
     final AgentScope scope = activateSpan(span);
     scope.setAsyncPropagation(true);
@@ -101,7 +102,7 @@ public class Servlet2Advice {
           && InstrumentationContext.get(ServletResponse.class, Integer.class).get(response)
               == HttpServletResponse.SC_OK) {
         // exception was thrown but status code wasn't set
-        span.setTag(Tags.HTTP_STATUS, 500);
+        span.setTag(Tags.HTTP_STATUS, _500);
       }
       DECORATE.onError(span, throwable);
     }

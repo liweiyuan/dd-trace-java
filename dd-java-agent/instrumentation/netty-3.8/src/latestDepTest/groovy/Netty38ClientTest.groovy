@@ -19,31 +19,32 @@ class Netty38ClientTest extends HttpClientTest {
 
   @Shared
   def clientConfig = new AsyncHttpClientConfig.Builder()
-    .setRequestTimeout(TimeUnit.SECONDS.toMillis(10).toInteger())
-    .build()
+  .setRequestTimeout(TimeUnit.SECONDS.toMillis(10).toInteger())
+  .setSSLContext(server.sslContext)
+  .build()
 
   @Shared
   @AutoCleanup
   AsyncHttpClient asyncHttpClient = new AsyncHttpClient(clientConfig)
 
   @Override
-  int doRequest(String method, URI uri, Map<String, String> headers, Closure callback) {
+  int doRequest(String method, URI uri, Map<String, String> headers, String body, Closure callback) {
     def methodName = "prepare" + method.toLowerCase().capitalize()
     def requestBuilder = asyncHttpClient."$methodName"(uri.toString())
     headers.each { requestBuilder.setHeader(it.key, it.value) }
     def response = requestBuilder.execute(new AsyncCompletionHandler() {
-      @Override
-      Object onCompleted(Response response) throws Exception {
-        callback?.call()
-        return response
-      }
-    }).get()
+        @Override
+        Object onCompleted(Response response) throws Exception {
+          callback?.call()
+          return response
+        }
+      }).get()
     blockUntilChildSpansFinished(1)
     return response.statusCode
   }
 
   @Override
-  String component() {
+  CharSequence component() {
     return NettyHttpClientDecorator.DECORATE.component()
   }
 
@@ -60,6 +61,11 @@ class Netty38ClientTest extends HttpClientTest {
   @Override
   boolean testConnectionFailure() {
     false
+  }
+
+  @Override
+  boolean testSecure() {
+    true
   }
 
   @Override

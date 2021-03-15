@@ -25,8 +25,8 @@ class MongoClientTest extends MongoBaseTest {
   def setup() throws Exception {
     client = new MongoClient(new ServerAddress("localhost", port),
       MongoClientOptions.builder()
-        .description("some-description")
-        .build())
+      .description("some-description")
+      .build())
   }
 
   def cleanup() throws Exception {
@@ -245,6 +245,7 @@ class MongoClientTest extends MongoBaseTest {
       } else {
         childOf((DDSpan) parentSpan)
       }
+      topLevel true
       tags {
         "$Tags.COMPONENT" "java-mongo"
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_CLIENT

@@ -1,40 +1,49 @@
 package datadog.trace.common.writer.ddagent;
 
-import static datadog.trace.core.StringTables.DURATION;
-import static datadog.trace.core.StringTables.ERROR;
-import static datadog.trace.core.StringTables.META;
-import static datadog.trace.core.StringTables.METRICS;
-import static datadog.trace.core.StringTables.NAME;
-import static datadog.trace.core.StringTables.PARENT_ID;
-import static datadog.trace.core.StringTables.RESOURCE;
-import static datadog.trace.core.StringTables.SERVICE;
-import static datadog.trace.core.StringTables.SPAN_ID;
-import static datadog.trace.core.StringTables.START;
-import static datadog.trace.core.StringTables.TRACE_ID;
-import static datadog.trace.core.StringTables.TYPE;
-import static datadog.trace.core.serialization.EncodingCachingStrategies.CONSTANT_KEYS;
-import static datadog.trace.core.serialization.EncodingCachingStrategies.NO_CACHING;
+import static datadog.trace.core.http.OkHttpUtils.msgpackRequestBodyOf;
 import static datadog.trace.core.serialization.Util.integerToStringBuffer;
 import static datadog.trace.core.serialization.Util.writeLongAsString;
-import static java.util.Collections.singletonList;
+import static java.nio.charset.StandardCharsets.ISO_8859_1;
 
 import datadog.trace.bootstrap.instrumentation.api.InstrumentationTags;
 import datadog.trace.bootstrap.instrumentation.api.UTF8BytesString;
 import datadog.trace.core.CoreSpan;
 import datadog.trace.core.Metadata;
 import datadog.trace.core.MetadataConsumer;
-import datadog.trace.core.http.OkHttpUtils;
 import datadog.trace.core.serialization.Writable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.WritableByteChannel;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import okhttp3.RequestBody;
 
 public final class TraceMapperV0_4 implements TraceMapper {
 
+  public static final byte[] SERVICE = "service".getBytes(ISO_8859_1);
+  public static final byte[] NAME = "name".getBytes(ISO_8859_1);
+  public static final byte[] RESOURCE = "resource".getBytes(ISO_8859_1);
+  public static final byte[] TRACE_ID = "trace_id".getBytes(ISO_8859_1);
+  public static final byte[] SPAN_ID = "span_id".getBytes(ISO_8859_1);
+  public static final byte[] PARENT_ID = "parent_id".getBytes(ISO_8859_1);
+  public static final byte[] START = "start".getBytes(ISO_8859_1);
+  public static final byte[] DURATION = "duration".getBytes(ISO_8859_1);
+  public static final byte[] TYPE = "type".getBytes(ISO_8859_1);
+  public static final byte[] ERROR = "error".getBytes(ISO_8859_1);
+  public static final byte[] METRICS = "metrics".getBytes(ISO_8859_1);
+  public static final byte[] META = "meta".getBytes(ISO_8859_1);
+
   static final byte[] EMPTY = ByteBuffer.allocate(1).put((byte) 0x90).array();
+  private final int size;
+
+  public TraceMapperV0_4(int size) {
+    this.size = size;
+  }
+
+  public TraceMapperV0_4() {
+    this(5 << 20);
+  }
 
   private static final class MetaWriter extends MetadataConsumer {
 
@@ -70,8 +79,8 @@ public final class TraceMapperV0_4 implements TraceMapper {
       for (Map.Entry<String, String> entry : metadata.getBaggage().entrySet()) {
         // tags and baggage may intersect, but tags take priority
         if ((overlaps & (1L << i)) == 0) {
-          writable.writeString(entry.getKey(), CONSTANT_KEYS);
-          writable.writeString(entry.getValue(), NO_CACHING);
+          writable.writeString(entry.getKey(), null);
+          writable.writeString(entry.getValue(), null);
         }
         ++i;
       }
@@ -80,7 +89,7 @@ public final class TraceMapperV0_4 implements TraceMapper {
       writable.writeUTF8(THREAD_ID);
       writeLongAsString(metadata.getThreadId(), writable, numberByteArray);
       for (Map.Entry<String, Object> entry : metadata.getTags().entrySet()) {
-        writable.writeString(entry.getKey(), CONSTANT_KEYS);
+        writable.writeString(entry.getKey(), null);
         if (entry.getValue() instanceof Long || entry.getValue() instanceof Integer) {
           // TODO it would be nice not to need to do this, either because
           //  the agent would accept variably typed tag values, or numeric
@@ -89,7 +98,7 @@ public final class TraceMapperV0_4 implements TraceMapper {
         } else if (entry.getValue() instanceof UTF8BytesString) {
           writable.writeUTF8((UTF8BytesString) entry.getValue());
         } else {
-          writable.writeString(String.valueOf(entry.getValue()), NO_CACHING);
+          writable.writeString(String.valueOf(entry.getValue()), null);
         }
       }
     }
@@ -104,13 +113,13 @@ public final class TraceMapperV0_4 implements TraceMapper {
       writable.startMap(12);
       /* 1  */
       writable.writeUTF8(SERVICE);
-      writable.writeString(span.getServiceName(), NO_CACHING);
+      writable.writeString(span.getServiceName(), null);
       /* 2  */
       writable.writeUTF8(NAME);
-      writable.writeObject(span.getOperationName(), NO_CACHING);
+      writable.writeObject(span.getOperationName(), null);
       /* 3  */
       writable.writeUTF8(RESOURCE);
-      writable.writeObject(span.getResourceName(), NO_CACHING);
+      writable.writeObject(span.getResourceName(), null);
       /* 4  */
       writable.writeUTF8(TRACE_ID);
       writable.writeLong(span.getTraceId().toLong());
@@ -128,7 +137,7 @@ public final class TraceMapperV0_4 implements TraceMapper {
       writable.writeLong(span.getDurationNano());
       /* 9  */
       writable.writeUTF8(TYPE);
-      writable.writeString(span.getType(), NO_CACHING);
+      writable.writeString(span.getType(), null);
       /* 10 */
       writable.writeUTF8(ERROR);
       writable.writeInt(span.getError());
@@ -161,8 +170,8 @@ public final class TraceMapperV0_4 implements TraceMapper {
       writable.writeInt(1);
     }
     for (Map.Entry<CharSequence, Number> metric : metrics.entrySet()) {
-      writable.writeString(metric.getKey(), CONSTANT_KEYS);
-      writable.writeObject(metric.getValue(), NO_CACHING);
+      writable.writeString(metric.getKey(), null);
+      writable.writeObject(metric.getValue(), null);
     }
   }
 
@@ -173,7 +182,7 @@ public final class TraceMapperV0_4 implements TraceMapper {
 
   @Override
   public int messageBufferSize() {
-    return 5 << 20; // 5MB
+    return size; // 5MB
   }
 
   @Override
@@ -188,11 +197,15 @@ public final class TraceMapperV0_4 implements TraceMapper {
 
     @Override
     int sizeInBytes() {
-      return body.remaining();
+      return msgpackArrayHeaderSize(traceCount()) + body.remaining();
     }
 
     @Override
     void writeTo(WritableByteChannel channel) throws IOException {
+      ByteBuffer header = msgpackArrayHeader(traceCount());
+      while (header.hasRemaining()) {
+        channel.write(header);
+      }
       while (body.hasRemaining()) {
         channel.write(body);
       }
@@ -200,7 +213,7 @@ public final class TraceMapperV0_4 implements TraceMapper {
 
     @Override
     RequestBody toRequest() {
-      return OkHttpUtils.msgpackRequestBodyOf(singletonList(body));
+      return msgpackRequestBodyOf(Arrays.asList(msgpackArrayHeader(traceCount()), body));
     }
   }
 }

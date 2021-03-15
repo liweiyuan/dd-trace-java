@@ -1,9 +1,11 @@
 package datadog.trace.common.writer.ddagent;
 
 import static datadog.trace.util.AgentThreadFactory.AgentThread.TRACE_PROCESSOR;
+import static datadog.trace.util.AgentThreadFactory.THREAD_JOIN_TIMOUT_MS;
 import static datadog.trace.util.AgentThreadFactory.newAgentThread;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
+import datadog.trace.core.CoreSpan;
 import datadog.trace.core.DDSpan;
 import datadog.trace.core.monitor.HealthMetrics;
 import datadog.trace.core.monitor.Monitoring;
@@ -37,13 +39,15 @@ public class TraceProcessingWorker implements AutoCloseable {
       final HealthMetrics healthMetrics,
       final Monitoring monitoring,
       final PayloadDispatcher dispatcher,
+      final DroppingPolicy droppingPolicy,
       final Prioritization prioritization,
       final long flushInterval,
       final TimeUnit timeUnit) {
     this.capacity = capacity;
     this.primaryQueue = createQueue(capacity);
     this.secondaryQueue = createQueue(capacity);
-    this.prioritizationStrategy = prioritization.create(primaryQueue, secondaryQueue);
+    this.prioritizationStrategy =
+        prioritization.create(primaryQueue, secondaryQueue, droppingPolicy);
     this.serializingHandler =
         new TraceSerializingHandler(
             primaryQueue,
@@ -78,10 +82,15 @@ public class TraceProcessingWorker implements AutoCloseable {
   @Override
   public void close() {
     serializerThread.interrupt();
+    try {
+      serializerThread.join(THREAD_JOIN_TIMOUT_MS);
+    } catch (InterruptedException ignored) {
+    }
   }
 
-  public boolean publish(int samplingPriority, final List<DDSpan> trace) {
-    return prioritizationStrategy.publish(samplingPriority, trace);
+  public <T extends CoreSpan<T>> boolean publish(
+      T root, int samplingPriority, final List<T> trace) {
+    return prioritizationStrategy.publish(root, samplingPriority, trace);
   }
 
   public int getCapacity() {

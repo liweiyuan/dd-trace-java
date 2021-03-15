@@ -1,25 +1,36 @@
 package datadog.trace.common.metrics;
 
+import static datadog.trace.api.Functions.UTF8_ENCODE;
 import static datadog.trace.common.metrics.AggregateMetric.ERROR_TAG;
+import static datadog.trace.common.metrics.AggregateMetric.TOP_LEVEL_TAG;
+import static datadog.trace.common.metrics.Batch.REPORT;
 import static datadog.trace.util.AgentThreadFactory.AgentThread.METRICS_AGGREGATOR;
+import static datadog.trace.util.AgentThreadFactory.THREAD_JOIN_TIMOUT_MS;
 import static datadog.trace.util.AgentThreadFactory.newAgentThread;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
 import datadog.trace.api.Config;
 import datadog.trace.api.WellKnownTags;
+import datadog.trace.api.cache.DDCache;
+import datadog.trace.api.cache.DDCaches;
 import datadog.trace.bootstrap.instrumentation.api.Tags;
+import datadog.trace.bootstrap.instrumentation.api.UTF8BytesString;
 import datadog.trace.core.CoreSpan;
+import datadog.trace.util.AgentTaskScheduler;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
-import org.jctools.queues.MpmcArrayQueue;
 import org.jctools.queues.MpscBlockingConsumerArrayQueue;
+import org.jctools.queues.SpmcArrayQueue;
 
 @Slf4j
 public final class ConflatingMetricsAggregator implements MetricsAggregator, EventListener {
+
+  private static final DDCache<String, UTF8BytesString> SERVICE_NAMES =
+      DDCaches.newFixedSizeCache(32);
 
   private static final Integer ZERO = 0;
 
@@ -27,12 +38,16 @@ public final class ConflatingMetricsAggregator implements MetricsAggregator, Eve
 
   private final Queue<Batch> batchPool;
   private final ConcurrentHashMap<MetricKey, Batch> pending;
+  private final ConcurrentHashMap<MetricKey, MetricKey> keys;
   private final Thread thread;
   private final BlockingQueue<Batch> inbox;
   private final Sink sink;
   private final Aggregator aggregator;
+  private final long reportingInterval;
+  private final TimeUnit reportingIntervalTimeUnit;
 
   private volatile boolean enabled = true;
+  private volatile AgentTaskScheduler.Scheduled<?> cancellation;
 
   public ConflatingMetricsAggregator(Config config) {
     this(
@@ -74,41 +89,75 @@ public final class ConflatingMetricsAggregator implements MetricsAggregator, Eve
       long reportingInterval,
       TimeUnit timeUnit) {
     this.inbox = new MpscBlockingConsumerArrayQueue<>(queueSize);
-    this.batchPool = new MpmcArrayQueue<>(maxAggregates);
+    this.batchPool = new SpmcArrayQueue<>(maxAggregates);
     this.pending = new ConcurrentHashMap<>(maxAggregates * 4 / 3, 0.75f);
+    this.keys = new ConcurrentHashMap<>();
     this.sink = sink;
     this.aggregator =
         new Aggregator(
-            metricWriter, batchPool, inbox, pending, maxAggregates, reportingInterval, timeUnit);
+            metricWriter,
+            batchPool,
+            inbox,
+            pending,
+            keys.keySet(),
+            maxAggregates,
+            reportingInterval,
+            timeUnit);
     this.thread = newAgentThread(METRICS_AGGREGATOR, aggregator);
+    this.reportingInterval = reportingInterval;
+    this.reportingIntervalTimeUnit = timeUnit;
   }
 
   @Override
   public void start() {
     sink.register(this);
     thread.start();
+    cancellation =
+        AgentTaskScheduler.INSTANCE.scheduleAtFixedRate(
+            new ReportTask(),
+            this,
+            reportingInterval,
+            reportingInterval,
+            reportingIntervalTimeUnit);
   }
 
   @Override
-  public void publish(List<? extends CoreSpan<?>> trace) {
+  public void report() {
+    boolean published;
+    do {
+      published = inbox.offer(REPORT);
+    } while (!published);
+  }
+
+  @Override
+  public boolean publish(List<? extends CoreSpan<?>> trace) {
+    boolean forceKeep = false;
     if (enabled) {
       for (CoreSpan<?> span : trace) {
-        if (span.isTopLevel() || span.isMeasured()) {
-          publish(span);
+        boolean isTopLevel = span.isTopLevel();
+        if (isTopLevel || span.isMeasured()) {
+          forceKeep |= publish(span, isTopLevel);
         }
       }
     }
+    return forceKeep;
   }
 
-  private void publish(CoreSpan<?> span) {
-    MetricKey key =
+  private boolean publish(CoreSpan<?> span, boolean isTopLevel) {
+    MetricKey newKey =
         new MetricKey(
             span.getResourceName(),
-            span.getServiceName(),
+            SERVICE_NAMES.computeIfAbsent(span.getServiceName(), UTF8_ENCODE),
             span.getOperationName(),
             span.getType(),
             span.getTag(Tags.HTTP_STATUS, ZERO));
-    long tag = span.getError() > 0 ? ERROR_TAG : 0L;
+    boolean isNewKey = false;
+    MetricKey key = keys.putIfAbsent(newKey, newKey);
+    if (null == key) {
+      key = newKey;
+      isNewKey = true;
+    }
+    long tag = (span.getError() > 0 ? ERROR_TAG : 0L) | (isTopLevel ? TOP_LEVEL_TAG : 0L);
     long durationNanos = span.getDurationNano();
     Batch batch = pending.get(key);
     if (null != batch) {
@@ -117,11 +166,13 @@ public final class ConflatingMetricsAggregator implements MetricsAggregator, Eve
       // more data, or it has already been consumed
       if (batch.add(tag, durationNanos)) {
         // added to a pending batch prior to consumption
-        // so skip publishing to the queue
-        return;
+        // so skip publishing to the queue (we also know
+        // the key isn't rare enough to override the sampler)
+        return false;
       }
       // recycle the older key
       key = batch.getKey();
+      isNewKey = false;
     }
     batch = newBatch(key);
     batch.add(tag, durationNanos);
@@ -130,6 +181,8 @@ public final class ConflatingMetricsAggregator implements MetricsAggregator, Eve
     pending.put(key, batch);
     // must offer to the queue after adding to pending
     inbox.offer(batch);
+    // force keep keys we haven't seen before or errors
+    return isNewKey || span.getError() > 0;
   }
 
   private Batch newBatch(MetricKey key) {
@@ -141,12 +194,19 @@ public final class ConflatingMetricsAggregator implements MetricsAggregator, Eve
   }
 
   public void stop() {
+    if (null != cancellation) {
+      cancellation.cancel();
+    }
     inbox.offer(POISON_PILL);
   }
 
   @Override
   public void close() {
     stop();
+    try {
+      thread.join(THREAD_JOIN_TIMOUT_MS);
+    } catch (InterruptedException ignored) {
+    }
   }
 
   @Override
@@ -173,5 +233,14 @@ public final class ConflatingMetricsAggregator implements MetricsAggregator, Eve
     this.batchPool.clear();
     this.inbox.clear();
     this.aggregator.clearAggregates();
+  }
+
+  private static final class ReportTask
+      implements AgentTaskScheduler.Task<ConflatingMetricsAggregator> {
+
+    @Override
+    public void run(ConflatingMetricsAggregator target) {
+      target.report();
+    }
   }
 }

@@ -7,7 +7,7 @@ import datadog.trace.bootstrap.instrumentation.api.AgentTracer
 import datadog.trace.common.writer.ListWriter
 import datadog.trace.core.propagation.ExtractedContext
 import datadog.trace.core.propagation.TagContext
-import datadog.trace.test.util.DDSpecification
+import datadog.trace.core.test.DDCoreSpecification
 
 import static datadog.trace.api.DDTags.LANGUAGE_TAG_KEY
 import static datadog.trace.api.DDTags.LANGUAGE_TAG_VALUE
@@ -17,10 +17,14 @@ import static datadog.trace.api.DDTags.THREAD_NAME
 import static datadog.trace.core.DDSpanContext.ORIGIN_KEY
 import static java.util.concurrent.TimeUnit.MILLISECONDS
 
-class CoreSpanBuilderTest extends DDSpecification {
+class CoreSpanBuilderTest extends DDCoreSpecification {
 
   def writer = new ListWriter()
-  def tracer = CoreTracer.builder().writer(writer).build()
+  def tracer = tracerBuilder().writer(writer).build()
+
+  def cleanup() {
+    tracer.close()
+  }
 
   def "build simple span"() {
     setup:
@@ -73,13 +77,13 @@ class CoreSpanBuilderTest extends DDSpecification {
 
     span =
       tracer
-        .buildSpan(expectedName)
-        .withServiceName("foo")
-        .withResourceName(expectedResource)
-        .withServiceName(expectedService)
-        .withErrorFlag()
-        .withSpanType(expectedType)
-        .start()
+      .buildSpan(expectedName)
+      .withServiceName("foo")
+      .withResourceName(expectedResource)
+      .withServiceName(expectedService)
+      .withErrorFlag()
+      .withSpanType(expectedType)
+      .start()
 
     final DDSpanContext context = span.context()
 
@@ -129,10 +133,10 @@ class CoreSpanBuilderTest extends DDSpecification {
 
     DDSpan span =
       tracer
-        .buildSpan(expectedName)
-        .withServiceName("foo")
-        .withStartTimestamp(expectedTimestamp)
-        .start()
+      .buildSpan(expectedName)
+      .withServiceName("foo")
+      .withStartTimestamp(expectedTimestamp)
+      .start()
 
     expect:
     // get return nano time
@@ -166,10 +170,10 @@ class CoreSpanBuilderTest extends DDSpecification {
 
     final DDSpan span =
       tracer
-        .buildSpan(expectedName)
-        .withServiceName("foo")
-        .asChildOf(mockedContext)
-        .start()
+      .buildSpan(expectedName)
+      .withServiceName("foo")
+      .asChildOf(mockedContext)
+      .start()
 
     final DDSpanContext actualContext = span.context()
 
@@ -202,11 +206,11 @@ class CoreSpanBuilderTest extends DDSpecification {
     parent.close()
 
     where:
-    noopParent  | serviceName         | expectTopLevel
-    false       |  "service"          | false
-    true        |  "service"          | true
-    false       |  "another service"  | true
-    true        |  "another service"  | true
+    noopParent | serviceName       | expectTopLevel
+    false      | "service"         | false
+    true       | "service"         | true
+    false      | "another service" | true
+    true       | "another service" | true
   }
 
   def "should inherit the DD parent attributes"() {
@@ -223,21 +227,21 @@ class CoreSpanBuilderTest extends DDSpecification {
 
     final DDSpan parent =
       tracer
-        .buildSpan(expectedName)
-        .withServiceName("foo")
-        .withResourceName(expectedParentResourceName)
-        .withSpanType(expectedParentType)
-        .start()
+      .buildSpan(expectedName)
+      .withServiceName("foo")
+      .withResourceName(expectedParentResourceName)
+      .withSpanType(expectedParentType)
+      .start()
 
     parent.setBaggageItem(expectedBaggageItemKey, expectedBaggageItemValue)
 
     // ServiceName and SpanType are always set by the parent  if they are not present in the child
     DDSpan span =
       tracer
-        .buildSpan(expectedName)
-        .withServiceName(expectedParentServiceName)
-        .asChildOf(parent)
-        .start()
+      .buildSpan(expectedName)
+      .withServiceName(expectedParentServiceName)
+      .asChildOf(parent)
+      .start()
 
     expect:
     span.getOperationName() == expectedName
@@ -251,12 +255,12 @@ class CoreSpanBuilderTest extends DDSpecification {
     // ServiceName and SpanType are always overwritten by the child  if they are present
     span =
       tracer
-        .buildSpan(expectedName)
-        .withServiceName(expectedChildServiceName)
-        .withResourceName(expectedChildResourceName)
-        .withSpanType(expectedChildType)
-        .asChildOf(parent)
-        .start()
+      .buildSpan(expectedName)
+      .withServiceName(expectedChildServiceName)
+      .withResourceName(expectedChildResourceName)
+      .withSpanType(expectedChildType)
+      .asChildOf(parent)
+      .start()
 
     then:
     span.getOperationName() == expectedName
@@ -308,13 +312,13 @@ class CoreSpanBuilderTest extends DDSpecification {
     span.context().origin == extractedContext.origin
     span.context().baggageItems == extractedContext.baggage
     span.context().tags == extractedContext.tags + [(RUNTIME_ID_TAG)  : Config.get().getRuntimeId(),
-                                                    (LANGUAGE_TAG_KEY): LANGUAGE_TAG_VALUE,
-                                                    (THREAD_NAME)     : thread.name, (THREAD_ID): thread.id]
+      (LANGUAGE_TAG_KEY): LANGUAGE_TAG_VALUE,
+      (THREAD_NAME)     : thread.name, (THREAD_ID): thread.id]
 
     where:
-    extractedContext                                                                                                                    | _
-    new ExtractedContext(DDId.ONE, DDId.from(2), 0, null, [:], [:])                                                                     | _
-    new ExtractedContext(DDId.from(3), DDId.from(4), 1, "some-origin", ["asdf": "qwer"], [(ORIGIN_KEY): "some-origin", "zxcv": "1234"]) | _
+    extractedContext                                                                                                                                | _
+    new ExtractedContext(DDId.ONE, DDId.from(2), 0, null, null, null, [:], [:])                                                                     | _
+    new ExtractedContext(DDId.from(3), DDId.from(4), 1, "some-origin", null, null, ["asdf": "qwer"], [(ORIGIN_KEY): "some-origin", "zxcv": "1234"]) | _
   }
 
   def "TagContext should populate default span details"() {
@@ -329,20 +333,20 @@ class CoreSpanBuilderTest extends DDSpecification {
     span.context().origin == tagContext.origin
     span.context().baggageItems == [:]
     span.context().tags == tagContext.tags + [(RUNTIME_ID_TAG)  : Config.get().getRuntimeId(),
-                                              (LANGUAGE_TAG_KEY): LANGUAGE_TAG_VALUE,
-                                              (THREAD_NAME)     : thread.name, (THREAD_ID): thread.id]
+      (LANGUAGE_TAG_KEY): LANGUAGE_TAG_VALUE,
+      (THREAD_NAME)     : thread.name, (THREAD_ID): thread.id]
 
     where:
-    tagContext                                                                   | _
-    new TagContext(null, [:])                                                    | _
-    new TagContext("some-origin", [(ORIGIN_KEY): "some-origin", "asdf": "qwer"]) | _
+    tagContext                                                                               | _
+    new TagContext(null, null, null, [:])                                                    | _
+    new TagContext("some-origin", null, null, [(ORIGIN_KEY): "some-origin", "asdf": "qwer"]) | _
   }
 
   def "global span tags populated on each span"() {
     setup:
     injectSysConfig("dd.trace.span.tags", tagString)
-    tracer = CoreTracer.builder().writer(writer).build()
-    def span = tracer.buildSpan("op name").withServiceName("foo").start()
+    def customTracer = tracerBuilder().writer(writer).build()
+    def span = customTracer.buildSpan("op name").withServiceName("foo").start()
 
     expect:
     span.tags == tags + [
@@ -351,6 +355,9 @@ class CoreSpanBuilderTest extends DDSpecification {
       (RUNTIME_ID_TAG)  : Config.get().getRuntimeId(),
       (LANGUAGE_TAG_KEY): LANGUAGE_TAG_VALUE,
     ]
+
+    cleanup:
+    customTracer.close()
 
     where:
     tagString     | tags

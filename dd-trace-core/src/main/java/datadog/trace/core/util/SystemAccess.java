@@ -1,9 +1,7 @@
 package datadog.trace.core.util;
 
 import datadog.trace.api.Config;
-import java.lang.management.RuntimeMXBean;
-import java.util.List;
-import javax.management.ObjectName;
+import de.thetaphi.forbiddenapis.SuppressForbidden;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
@@ -20,6 +18,7 @@ public final class SystemAccess {
   }
 
   /** Enable JMX accesses */
+  @SuppressForbidden
   public static void enableJmx() {
     if (!Config.get().isProfilingEnabled() && !Config.get().isHealthMetricsEnabled()) {
       log.debug("Will not enable JMX access. Profiling and metrics are both disabled.");
@@ -54,34 +53,5 @@ public final class SystemAccess {
    */
   public static long getCurrentThreadCpuTime() {
     return systemAccessProvider.getThreadCpuTime();
-  }
-
-  /**
-   * Get the current process id
-   *
-   * @return the actual current process id or 0 if the JMX provider is not available
-   */
-  public static int getCurrentPid() {
-    return systemAccessProvider.getCurrentPid();
-  }
-
-  /**
-   * Invokes command on {@code com.sun.management:type=DiagnosticCommand}. See {@link
-   * javax.management.MBeanServer#invoke(ObjectName, String, Object[], String[])}
-   *
-   * @return string result of invoking diagnostic command, null if nothing executed
-   */
-  public static String executeDiagnosticCommand(
-      final String command, final Object[] args, final String[] sig) {
-    return systemAccessProvider.executeDiagnosticCommand(command, args, sig);
-  }
-
-  /**
-   * Wrapper for {@linkplain RuntimeMXBean#getInputArguments()}
-   *
-   * @return arguments passed to JVM
-   */
-  public static List<String> getVMArguments() {
-    return systemAccessProvider.getVMArguments();
   }
 }

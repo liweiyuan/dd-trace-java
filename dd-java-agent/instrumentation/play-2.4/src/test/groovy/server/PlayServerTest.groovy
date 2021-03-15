@@ -15,6 +15,7 @@ import java.util.function.Supplier
 
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.ERROR
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.EXCEPTION
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.FORWARDED
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.QUERY_PARAM
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.REDIRECT
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.SUCCESS
@@ -24,27 +25,32 @@ class PlayServerTest extends HttpServerTest<Server> {
   Server startServer(int port) {
     def router =
       new RoutingDsl()
-        .GET(SUCCESS.getPath()).routeTo({
+      .GET(SUCCESS.getPath()).routeTo({
         controller(SUCCESS) {
           Results.status(SUCCESS.getStatus(), SUCCESS.getBody())
         }
       } as Supplier)
-        .GET(QUERY_PARAM.getPath()).routeTo({
-        controller(QUERY_PARAM) {
-          Results.status(QUERY_PARAM.getStatus(), QUERY_PARAM.getBody())
+      .GET(FORWARDED.getPath()).routeTo({
+        controller(FORWARDED) {
+          Results.status(FORWARDED.getStatus(), FORWARDED.getBody()) // cheating
         }
       } as Supplier)
-        .GET(REDIRECT.getPath()).routeTo({
+      .GET(QUERY_PARAM.getPath()).routeTo({
+        controller(QUERY_PARAM) {
+          Results.status(QUERY_PARAM.getStatus(), QUERY_PARAM.getBody()) // cheating
+        }
+      } as Supplier)
+      .GET(REDIRECT.getPath()).routeTo({
         controller(REDIRECT) {
           Results.found(REDIRECT.getBody())
         }
       } as Supplier)
-        .GET(ERROR.getPath()).routeTo({
+      .GET(ERROR.getPath()).routeTo({
         controller(ERROR) {
           Results.status(ERROR.getStatus(), ERROR.getBody())
         }
       } as Supplier)
-        .GET(EXCEPTION.getPath()).routeTo({
+      .GET(EXCEPTION.getPath()).routeTo({
         controller(EXCEPTION) {
           throw new Exception(EXCEPTION.getBody())
         }
@@ -89,7 +95,7 @@ class PlayServerTest extends HttpServerTest<Server> {
       tags {
         "$Tags.COMPONENT" PlayHttpServerDecorator.DECORATE.component()
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
-        "$Tags.PEER_HOST_IPV4" { it == null || it == "127.0.0.1" } // Optional
+        "$Tags.PEER_HOST_IPV4" { endpoint == FORWARDED ? it == endpoint.body : (it == null || it == "127.0.0.1") }
         "$Tags.HTTP_URL" String
         "$Tags.HTTP_METHOD" String
         "$Tags.HTTP_STATUS" Integer
