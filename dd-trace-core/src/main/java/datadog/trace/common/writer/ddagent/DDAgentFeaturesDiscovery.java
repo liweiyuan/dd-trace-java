@@ -12,14 +12,16 @@ import java.util.Collections;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
-import lombok.extern.slf4j.Slf4j;
 import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-@Slf4j
 public class DDAgentFeaturesDiscovery implements DroppingPolicy {
+
+  private static final Logger log = LoggerFactory.getLogger(DDAgentFeaturesDiscovery.class);
 
   private static final JsonAdapter<Map<String, Object>> RESPONSE_ADAPTER =
       new Moshi.Builder()
@@ -30,14 +32,14 @@ public class DDAgentFeaturesDiscovery implements DroppingPolicy {
   public static final String V4_ENDPOINT = "v0.4/traces";
   public static final String V5_ENDPOINT = "v0.5/traces";
 
-  private static final String V5_METRICS_ENDPOINT = "v0.5/stats";
+  public static final String V6_METRICS_ENDPOINT = "v0.6/stats";
   private static final String DATADOG_AGENT_STATE = "Datadog-Agent-State";
 
   private final OkHttpClient client;
   private final HttpUrl agentBaseUrl;
   private final Recording discoveryTimer;
   private final String[] traceEndpoints;
-  private final String[] metricsEndpoints = {V5_METRICS_ENDPOINT};
+  private final String[] metricsEndpoints = {V6_METRICS_ENDPOINT};
   private final boolean metricsEnabled;
 
   private volatile String traceEndpoint;
@@ -80,36 +82,15 @@ public class DDAgentFeaturesDiscovery implements DroppingPolicy {
       if (fallback) {
         this.supportsDropping = false;
         log.debug("Falling back to probing, client dropping will be disabled");
-        if (metricsEnabled) {
-          this.metricsEndpoint = probeTracerMetricsEndpoint();
-        }
+        // disable metrics unless the info endpoint is present, which prevents
+        // sending metrics to 7.26.0, which has a bug in reporting metric origin
+        this.metricsEndpoint = null;
         // don't want to rewire the traces pipeline
         if (null == traceEndpoint) {
           this.traceEndpoint = probeTracesEndpoint();
         }
       }
     }
-  }
-
-  private String probeTracerMetricsEndpoint() {
-    String candidate = "v0.5/stats";
-    try (Response response =
-        client
-            .newCall(
-                new Request.Builder()
-                    .put(OkHttpUtils.msgpackRequestBodyOf(Collections.<ByteBuffer>emptyList()))
-                    .url(agentBaseUrl.resolve(candidate).url())
-                    .build())
-            .execute()) {
-      if (response.code() != 404) {
-        this.state = response.header(DATADOG_AGENT_STATE);
-        return candidate;
-      }
-    } catch (IOException e) {
-      errorQueryingEndpoint(candidate, e);
-    }
-    log.debug("No metrics endpoint found, metrics will be disabled");
-    return null;
   }
 
   private String probeTracesEndpoint() {
@@ -123,6 +104,7 @@ public class DDAgentFeaturesDiscovery implements DroppingPolicy {
                       .build())
               .execute()) {
         if (response.code() != 404) {
+          this.state = response.header(DATADOG_AGENT_STATE);
           return candidate;
         }
       } catch (IOException e) {

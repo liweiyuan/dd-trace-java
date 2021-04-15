@@ -6,10 +6,10 @@ import static datadog.trace.common.writer.ddagent.Prioritization.ENSURE_TRACE;
 import static datadog.trace.common.writer.ddagent.Prioritization.FAST_LANE;
 import static datadog.trace.core.http.OkHttpUtils.buildHttpClient;
 
-import com.timgroup.statsd.StatsDClient;
 import datadog.common.container.ServerlessInfo;
 import datadog.trace.api.Config;
 import datadog.trace.api.ConfigDefaults;
+import datadog.trace.api.StatsDClient;
 import datadog.trace.api.config.TracerConfig;
 import datadog.trace.common.sampling.Sampler;
 import datadog.trace.common.writer.ddagent.DDAgentApi;
@@ -20,12 +20,14 @@ import datadog.trace.core.monitor.HealthMetrics;
 import datadog.trace.core.monitor.Monitoring;
 import datadog.trace.util.Strings;
 import java.util.concurrent.TimeUnit;
-import lombok.extern.slf4j.Slf4j;
 import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-@Slf4j
 public class WriterFactory {
+
+  private static final Logger log = LoggerFactory.getLogger(WriterFactory.class);
 
   public static Writer createWriter(
       final Config config,

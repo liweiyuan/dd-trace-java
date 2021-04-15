@@ -7,8 +7,8 @@ import datadog.trace.agent.tooling.Utils;
 import datadog.trace.agent.tooling.muzzle.Reference.Mismatch;
 import datadog.trace.agent.tooling.muzzle.Reference.Source;
 import datadog.trace.api.Function;
+import datadog.trace.api.Pair;
 import datadog.trace.bootstrap.WeakCache;
-import datadog.trace.bootstrap.instrumentation.api.Pair;
 import de.thetaphi.forbiddenapis.SuppressForbidden;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -17,14 +17,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import lombok.extern.slf4j.Slf4j;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.pool.TypePool;
 
 /** Matches a set of references against a classloader. */
-@Slf4j
 public final class ReferenceMatcher {
   private static final Source[] EMPTY_SOURCES = new Source[0];
   private final WeakCache<ClassLoader, Boolean> mismatchCache = AgentTooling.newWeakCache();
@@ -54,16 +52,17 @@ public final class ReferenceMatcher {
     if (loader == BOOTSTRAP_LOADER) {
       loader = Utils.getBootstrapProxy();
     }
-    return mismatchCache.computeIfAbsent(
-        loader,
-        // Can't use a function reference because of Java7 support
-        new Function<ClassLoader, Boolean>() {
-          @Override
-          public Boolean apply(ClassLoader key) {
-            return doesMatch(key);
-          }
-        });
+    return mismatchCache.computeIfAbsent(loader, DOES_MATCH);
   }
+
+  // Can't use a function reference because of Java7 support
+  private final Function<ClassLoader, Boolean> DOES_MATCH =
+      new Function<ClassLoader, Boolean>() {
+        @Override
+        public Boolean apply(ClassLoader key) {
+          return doesMatch(key);
+        }
+      };
 
   private boolean doesMatch(final ClassLoader loader) {
     final List<Mismatch> mismatches = new ArrayList<>();

@@ -2,7 +2,6 @@ package datadog.smoketest.springboot.controller;
 
 import datadog.smoketest.springboot.AsyncTask;
 import datadog.smoketest.springboot.grpc.AsynchronousGreeter;
-import datadog.smoketest.springboot.grpc.SynchronousGreeter;
 import datadog.smoketest.springboot.spanner.SpannerTask;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -10,51 +9,28 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-@Slf4j
 @RestController
 public class WebController {
 
   private final ExecutorService pool = Executors.newFixedThreadPool(5);
 
   private final AsynchronousGreeter asyncGreeter;
-  private final SynchronousGreeter greeter;
   private final AsyncTask asyncTask;
   private final SpannerTask spannerTask;
 
   public WebController(
-      AsynchronousGreeter asyncGreeter,
-      SynchronousGreeter greeter,
-      AsyncTask asyncTask,
-      SpannerTask spannerTask) {
+      AsynchronousGreeter asyncGreeter, AsyncTask asyncTask, SpannerTask spannerTask) {
     this.asyncGreeter = asyncGreeter;
-    this.greeter = greeter;
     this.asyncTask = asyncTask;
     this.spannerTask = spannerTask;
-  }
-
-  @RequestMapping("/greeting")
-  public String greeting() {
-    return greeter.greet();
-  }
-
-  @RequestMapping("/async_greeting")
-  public String asyncGreeting() {
-    return asyncGreeter.greet();
   }
 
   @RequestMapping("/spanner")
   public String spanner() {
     spannerTask.spannerResultSet().thenAccept(results -> {}).join();
-    return "bye";
-  }
-
-  @RequestMapping("/spanner_no_async")
-  public String spannerNoAsync() {
-    spannerTask.getSpannerResultSet().thenAccept(results -> {}).join();
     return "bye";
   }
 

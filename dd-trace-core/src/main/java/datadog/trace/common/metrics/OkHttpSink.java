@@ -4,6 +4,7 @@ import static datadog.trace.common.metrics.EventListener.EventType.BAD_PAYLOAD;
 import static datadog.trace.common.metrics.EventListener.EventType.DOWNGRADED;
 import static datadog.trace.common.metrics.EventListener.EventType.ERROR;
 import static datadog.trace.common.metrics.EventListener.EventType.OK;
+import static datadog.trace.common.writer.ddagent.DDAgentFeaturesDiscovery.V6_METRICS_ENDPOINT;
 import static datadog.trace.core.http.OkHttpUtils.buildHttpClient;
 import static datadog.trace.core.http.OkHttpUtils.msgpackRequestBodyOf;
 import static datadog.trace.core.http.OkHttpUtils.prepareRequest;
@@ -17,17 +18,20 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import lombok.extern.slf4j.Slf4j;
 import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import org.jctools.queues.SpscArrayQueue;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-@Slf4j
 public final class OkHttpSink implements Sink, EventListener {
+
+  private static final Logger log = LoggerFactory.getLogger(OkHttpSink.class);
 
   private final OkHttpClient client;
   private final HttpUrl metricsUrl;
+  private final HttpUrl validationUrl;
   private final List<EventListener> listeners;
   private final SpscArrayQueue<Request> enqueuedRequests = new SpscArrayQueue<>(10);
   private final AtomicLong lastRequestTime = new AtomicLong();
@@ -42,7 +46,7 @@ public final class OkHttpSink implements Sink, EventListener {
     this(
         buildHttpClient(HttpUrl.get(agentUrl), timeoutMillis),
         agentUrl,
-        "v0.5/stats",
+        V6_METRICS_ENDPOINT,
         bufferingEnabled);
   }
 
@@ -58,6 +62,7 @@ public final class OkHttpSink implements Sink, EventListener {
       boolean bufferingEnabled) {
     this.client = client;
     this.metricsUrl = HttpUrl.get(agentUrl).resolve(path);
+    this.validationUrl = HttpUrl.get(agentUrl).resolve("info");
     this.listeners = new CopyOnWriteArrayList<>();
     this.asyncThresholdLatency = asyncThresholdLatency;
     this.bufferingEnabled = bufferingEnabled;
@@ -137,6 +142,22 @@ public final class OkHttpSink implements Sink, EventListener {
   @Override
   public void register(EventListener listener) {
     this.listeners.add(listener);
+  }
+
+  @Override
+  public boolean validate() {
+    // TODO rework DDAgentFeaturesDiscovery so it can be used here,
+    // independently of DDAgentWriter
+    // check the /info endpoint exists which means trace agent >= 7.27.0
+    try (final okhttp3.Response response =
+        client.newCall(prepareRequest(validationUrl).build()).execute()) {
+      if (response.code() != 404 && response.code() < 500) {
+        return true;
+      }
+    } catch (Throwable ignore) {
+      log.debug("Error validating metrics endpoint", ignore);
+    }
+    return false;
   }
 
   private void handleFailure(okhttp3.Response response) throws IOException {

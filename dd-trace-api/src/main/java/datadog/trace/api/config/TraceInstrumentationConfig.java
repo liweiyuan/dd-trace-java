@@ -31,8 +31,6 @@ public final class TraceInstrumentationConfig {
 
   public static final String RUNTIME_CONTEXT_FIELD_INJECTION =
       "trace.runtime.context.field.injection";
-  public static final String LEGACY_CONTEXT_FIELD_INJECTION =
-      "trace.legacy.context.field.injection";
   public static final String SERIALVERSIONUID_FIELD_INJECTION =
       "trace.serialversionuid.field.injection";
 
@@ -45,6 +43,7 @@ public final class TraceInstrumentationConfig {
 
   public static final String GRPC_IGNORED_OUTBOUND_METHODS = "trace.grpc.ignored.outbound.methods";
   public static final String HYSTRIX_TAGS_ENABLED = "hystrix.tags.enabled";
+  public static final String HYSTRIX_MEASURED_ENABLED = "hystrix.measured.enabled";
 
   public static final String OSGI_SEARCH_DEPTH = "osgi.search.depth";
 

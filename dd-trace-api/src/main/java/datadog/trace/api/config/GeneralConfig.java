@@ -25,6 +25,7 @@ public final class GeneralConfig {
   @Deprecated // Use dd.tags instead
   public static final String GLOBAL_TAGS = "trace.global.tags";
 
+  public static final String DOGSTATSD_START_DELAY = "dogstatsd.start-delay";
   public static final String RUNTIME_METRICS_ENABLED = "runtime.metrics.enabled";
 
   public static final String HEALTH_METRICS_ENABLED = "trace.health.metrics.enabled";
@@ -37,6 +38,8 @@ public final class GeneralConfig {
       "trace.tracer.metrics.buffering.enabled";
   public static final String TRACER_METRICS_MAX_AGGREGATES = "trace.tracer.metrics.max.aggregates";
   public static final String TRACER_METRICS_MAX_PENDING = "trace.tracer.metrics.max.pending";
+  public static final String TRACER_METRICS_IGNORED_RESOURCES =
+      "trace.tracer.metrics.ignored.resources";
 
   public static final String INTERNAL_EXIT_ON_FAILURE = "trace.internal.exit.on.failure";
 

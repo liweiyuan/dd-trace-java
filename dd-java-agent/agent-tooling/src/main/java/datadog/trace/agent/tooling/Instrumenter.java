@@ -11,7 +11,6 @@ import static net.bytebuddy.matcher.ElementMatchers.not;
 import datadog.trace.agent.tooling.bytebuddy.DDTransformers;
 import datadog.trace.agent.tooling.bytebuddy.ExceptionHandlers;
 import datadog.trace.agent.tooling.context.FieldBackedContextProvider;
-import datadog.trace.agent.tooling.context.FieldBackedProvider;
 import datadog.trace.agent.tooling.context.InstrumentationContextProvider;
 import datadog.trace.agent.tooling.context.NoopContextProvider;
 import datadog.trace.agent.tooling.muzzle.Reference;
@@ -27,7 +26,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
-import lombok.extern.slf4j.Slf4j;
 import net.bytebuddy.agent.builder.AgentBuilder;
 import net.bytebuddy.description.annotation.AnnotationSource;
 import net.bytebuddy.description.method.MethodDescription;
@@ -35,6 +33,8 @@ import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.matcher.ElementMatcher.Junction;
 import net.bytebuddy.utility.JavaModule;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Built-in bytebuddy-based instrumentation for the datadog javaagent.
@@ -75,9 +75,9 @@ public interface Instrumenter {
    */
   boolean isApplicable(Set<TargetSystem> enabledSystems);
 
-  @Slf4j
   @SuppressFBWarnings("IS2_INCONSISTENT_SYNC")
   abstract class Default implements Instrumenter {
+    private static final Logger log = LoggerFactory.getLogger(Default.class);
     private static final ElementMatcher<ClassLoader> ANY_CLASS_LOADER = any();
 
     // Added here instead of AgentInstaller's ignores because it's relatively
@@ -127,11 +127,7 @@ public interface Instrumenter {
             }
           }
           if (!contextStores.isEmpty()) {
-            if (Config.get().isLegacyContextFieldInjection()) {
-              contextProvider = new FieldBackedProvider(this, contextStores);
-            } else {
-              contextProvider = new FieldBackedContextProvider(this, contextStores);
-            }
+            contextProvider = new FieldBackedContextProvider(this, contextStores);
           } else {
             contextProvider = NoopContextProvider.INSTANCE;
           }
@@ -161,7 +157,6 @@ public interface Instrumenter {
                           + getClass().getName()))
               .and(NOT_DECORATOR_MATCHER)
               .and(new MuzzleMatcher())
-              .and(new PostMatchHook())
               .transform(DDTransformers.defaultTransformers());
       agentBuilder = injectHelperClasses(agentBuilder);
       agentBuilder = contextProvider.instrumentationTransformer(agentBuilder);
@@ -240,19 +235,6 @@ public interface Instrumenter {
       }
     }
 
-    private class PostMatchHook implements AgentBuilder.RawMatcher {
-      @Override
-      public boolean matches(
-          final TypeDescription typeDescription,
-          final ClassLoader classLoader,
-          final JavaModule module,
-          final Class<?> classBeingRedefined,
-          final ProtectionDomain protectionDomain) {
-        postMatch(typeDescription, classLoader, module, classBeingRedefined, protectionDomain);
-        return true;
-      }
-    }
-
     /**
      * This method is implemented dynamically by compile-time bytecode transformations.
      *
@@ -282,25 +264,6 @@ public interface Instrumenter {
 
     /** @return A type matcher used to match the class under transform. */
     public abstract ElementMatcher<? super TypeDescription> typeMatcher();
-
-    /**
-     * A hook invoked after matching has succeeded and before transformers have run.
-     *
-     * <p>Implementation note: This hook runs inside of the bytebuddy matching phase.
-     *
-     * @param typeDescription type description of the matched type
-     * @param classLoader classloader loading the class under transform
-     * @param module java module
-     * @param classBeingRedefined null when the matched class is being loaded for the first time.
-     *     The instance of the active class during retransforms.
-     * @param protectionDomain protection domain of the class under load.
-     */
-    public void postMatch(
-        final TypeDescription typeDescription,
-        final ClassLoader classLoader,
-        final JavaModule module,
-        final Class<?> classBeingRedefined,
-        final ProtectionDomain protectionDomain) {}
 
     /** @return A map of matcher->advice */
     public abstract Map<? extends ElementMatcher<? super MethodDescription>, String> transformers();

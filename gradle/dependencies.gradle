@@ -12,7 +12,6 @@ ext {
     groovy        : groovyVer,
     junit5        : "5.6.2",
     logback       : "1.2.3",
-    lombok        : "1.18.18",
     bytebuddy     : "1.10.22",
     scala         : "2.11.12",  // Last version to support Java 7 (2.12+ require Java 8+)
     scala210      : "2.10.7",
@@ -52,7 +51,10 @@ ext {
       dependencies.create(group: 'org.objenesis', name: 'objenesis', version: '2.6') // Last version to support Java7
     ],
     groovy        : "org.codehaus.groovy:groovy-all:${versions.groovy}",
-    junit5        : "org.junit.jupiter:junit-jupiter:${versions.junit5}",
+    junit5        : [
+      dependencies.create(group: 'org.junit.jupiter', name: 'junit-jupiter', version: versions.junit5),
+      dependencies.create(group: 'org.junit.jupiter', name: 'junit-jupiter-params', version: versions.junit5)
+    ],
     mockito       : [
       dependencies.create(group: 'org.mockito', name: 'mockito-core', version: versions.mockito),
       dependencies.create(group: 'org.mockito', name: 'mockito-junit-jupiter', version: versions.mockito)

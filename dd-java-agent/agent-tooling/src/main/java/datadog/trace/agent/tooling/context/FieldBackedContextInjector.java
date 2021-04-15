@@ -2,8 +2,8 @@ package datadog.trace.agent.tooling.context;
 
 import static datadog.trace.agent.tooling.context.ShouldInjectFieldsMatcher.hasInjectedField;
 import static datadog.trace.bootstrap.FieldBackedContextStores.getContextStoreId;
+import static datadog.trace.util.Strings.getInternalName;
 
-import datadog.trace.agent.tooling.Utils;
 import datadog.trace.api.Config;
 import datadog.trace.bootstrap.ContextStore;
 import datadog.trace.bootstrap.FieldBackedContextAccessor;
@@ -11,7 +11,6 @@ import datadog.trace.bootstrap.FieldBackedContextStores;
 import java.io.Serializable;
 import java.util.Arrays;
 import java.util.BitSet;
-import lombok.extern.slf4j.Slf4j;
 import net.bytebuddy.ClassFileVersion;
 import net.bytebuddy.asm.AsmVisitorWrapper;
 import net.bytebuddy.description.field.FieldDescription;
@@ -27,16 +26,19 @@ import net.bytebuddy.jar.asm.MethodVisitor;
 import net.bytebuddy.jar.asm.Opcodes;
 import net.bytebuddy.jar.asm.Type;
 import net.bytebuddy.pool.TypePool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Injects fields and accessors so the class can act as a surrogate {@link ContextStore}. */
-@Slf4j
 final class FieldBackedContextInjector implements AsmVisitorWrapper {
 
+  private static final Logger log = LoggerFactory.getLogger(FieldBackedContextInjector.class);
+
   static final String FIELD_BACKED_CONTEXT_STORES_CLASS =
-      Utils.getInternalName(FieldBackedContextStores.class.getName());
+      getInternalName(FieldBackedContextStores.class.getName());
 
   static final String FIELD_BACKED_CONTEXT_ACCESSOR_CLASS =
-      Utils.getInternalName(FieldBackedContextAccessor.class.getName());
+      getInternalName(FieldBackedContextAccessor.class.getName());
 
   static final String CONTEXT_STORE_ACCESS_PREFIX = "__datadogContext$";
 
@@ -60,7 +62,7 @@ final class FieldBackedContextInjector implements AsmVisitorWrapper {
 
   static final String OBJECT_DESCRIPTOR = Type.getDescriptor(Object.class);
 
-  static final String LINKAGE_ERROR_CLASS = Utils.getInternalName(LinkageError.class.getName());
+  static final String LINKAGE_ERROR_CLASS = getInternalName(LinkageError.class.getName());
 
   /** Keeps track of injection requests for the class being transformed by the current thread. */
   static final ThreadLocal<BitSet> INJECTED_STORE_IDS = new ThreadLocal<>();

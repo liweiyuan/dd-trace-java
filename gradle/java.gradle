@@ -63,14 +63,9 @@ if (project.hasProperty('minJavaVersionForTests') && project.getProperty('minJav
     targetCompatibility = version
   }
 
-  // Note: ideally lombok plugin would do this for us, but currently it doesn't support custom
-  // source sets. See https://github.com/franzbecker/gradle-lombok/issues/17.
   dependencies {
     compileOnly sourceSets."main_$name".compileClasspath
     compile sourceSets."main_$name".output
-
-    "main_${name}CompileOnly" "org.projectlombok:lombok:${project.lombok.version}" transitive false
-    "main_${name}AnnotationProcessor" "org.projectlombok:lombok:${project.lombok.version}" transitive false
   }
 
   jar {
@@ -93,6 +88,8 @@ if (project.hasProperty('minJavaVersionForTests') && project.getProperty('minJav
 java {
   // See https://docs.gradle.org/current/userguide/upgrading_version_5.html, Automatic target JVM version
   disableAutoTargetJvm()
+  withJavadocJar()
+  withSourcesJar()
 }
 
 [JavaCompile, ScalaCompile].each { type ->
@@ -112,14 +109,6 @@ java {
   }
 }
 
-apply plugin: "io.franzbecker.gradle-lombok"
-
-lombok {
-  // optional: values below are the defaults
-  version = versions.lombok
-  sha256 = ""
-}
-
 apply plugin: "eclipse"
 eclipse {
   classpath {
@@ -132,7 +121,7 @@ if (configurations.find { it.name == 'jmh' }) {
 }
 
 jar {
-  /*
+  /**
    Make Jar build fail on duplicate files
    By default Gradle Jar task can put multiple files with the same name
    into a Jar. This may lead to confusion. For example if auto-service
@@ -195,22 +184,6 @@ javadoc {
     links "https://docs.oracle.com/javase/8/docs/api/"
     source = 8
   }
-}
-
-tasks.register("sourceJar", Jar) {
-  from sourceSets.main.allJava
-  classifier = 'sources'
-}
-
-tasks.register("javaDocJar", Jar) {
-  from javadoc.destinationDir
-  classifier = 'javadoc'
-  dependsOn javadoc
-}
-
-artifacts {
-  archives sourceJar
-  archives javaDocJar
 }
 
 project.afterEvaluate {
@@ -390,6 +363,7 @@ tasks.withType(Test).configureEach {
     exclude "**/TestTemplate*"
     exclude "**/TestDisableTestTrace*"
     exclude "**/TestAssumption*"
+    exclude "**/TestParameterized*"
   }
 
   // Split up tests that want to run forked in their own separate JVM for generated tasks

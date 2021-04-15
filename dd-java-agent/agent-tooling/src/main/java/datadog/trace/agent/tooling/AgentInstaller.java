@@ -8,7 +8,6 @@ import static net.bytebuddy.matcher.ElementMatchers.any;
 import static net.bytebuddy.matcher.ElementMatchers.none;
 
 import datadog.trace.agent.tooling.context.FieldBackedContextProvider;
-import datadog.trace.agent.tooling.context.FieldBackedProvider;
 import datadog.trace.api.Config;
 import datadog.trace.bootstrap.FieldBackedContextAccessor;
 import datadog.trace.bootstrap.instrumentation.java.concurrent.ExcludeFilter;
@@ -21,7 +20,6 @@ import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
-import lombok.extern.slf4j.Slf4j;
 import net.bytebuddy.agent.builder.AgentBuilder;
 import net.bytebuddy.agent.builder.ResettableClassFileTransformer;
 import net.bytebuddy.description.type.TypeDefinition;
@@ -29,9 +27,11 @@ import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.utility.JavaModule;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-@Slf4j
 public class AgentInstaller {
+  private static final Logger log = LoggerFactory.getLogger(AgentInstaller.class);
   private static final boolean DEBUG = log.isDebugEnabled();
 
   private static final List<Runnable> LOG_MANAGER_CALLBACKS = new CopyOnWriteArrayList<>();
@@ -43,6 +43,7 @@ public class AgentInstaller {
   }
 
   static {
+    addByteBuddyRawSetting();
     // WeakMap is used by other classes below, so we need to register the provider first.
     AgentTooling.registerWeakMapProvider();
   }
@@ -75,13 +76,7 @@ public class AgentInstaller {
       final AgentBuilder.Listener... listeners) {
     INSTRUMENTATION = inst;
 
-    addByteBuddyRawSetting();
-
-    if (Config.get().isLegacyContextFieldInjection()) {
-      FieldBackedProvider.resetContextMatchers();
-    } else {
-      FieldBackedContextProvider.resetContextMatchers();
-    }
+    FieldBackedContextProvider.resetContextMatchers();
 
     AgentBuilder.Ignored ignoredAgentBuilder =
         new AgentBuilder.Default()
@@ -218,8 +213,9 @@ public class AgentInstaller {
     return matcher;
   }
 
-  @Slf4j
   static class RedefinitionLoggingListener implements AgentBuilder.RedefinitionStrategy.Listener {
+
+    private static final Logger log = LoggerFactory.getLogger(RedefinitionLoggingListener.class);
 
     @Override
     public void onBatch(final int index, final List<Class<?>> batch, final List<Class<?>> types) {}
@@ -244,8 +240,9 @@ public class AgentInstaller {
         final Map<List<Class<?>>, Throwable> failures) {}
   }
 
-  @Slf4j
   static class TransformLoggingListener implements AgentBuilder.Listener {
+
+    private static final Logger log = LoggerFactory.getLogger(TransformLoggingListener.class);
 
     @Override
     public void onError(

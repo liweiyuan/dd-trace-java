@@ -28,7 +28,6 @@ public final class ConfigDefaults {
   static final String DEFAULT_AGENT_WRITER_TYPE = "DDAgentWriter";
 
   static final boolean DEFAULT_RUNTIME_CONTEXT_FIELD_INJECTION = true;
-  static final boolean DEFAULT_LEGACY_CONTEXT_FIELD_INJECTION = false;
   static final boolean DEFAULT_SERIALVERSIONUID_FIELD_INJECTION = true;
 
   static final boolean DEFAULT_PRIORITY_SAMPLING_ENABLED = true;
@@ -45,6 +44,7 @@ public final class ConfigDefaults {
   static final boolean DEFAULT_JMX_FETCH_ENABLED = true;
   static final boolean DEFAULT_TRACE_AGENT_V05_ENABLED = false;
 
+  static final int DEFAULT_DOGSTATSD_START_DELAY = 15; // seconds
   static final int DEFAULT_JMX_FETCH_STATSD_PORT = 8125;
 
   static final boolean DEFAULT_HEALTH_METRICS_ENABLED = true;

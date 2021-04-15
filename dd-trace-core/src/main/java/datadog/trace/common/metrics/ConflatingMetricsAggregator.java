@@ -19,15 +19,18 @@ import datadog.trace.core.CoreSpan;
 import datadog.trace.util.AgentTaskScheduler;
 import java.util.List;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
-import lombok.extern.slf4j.Slf4j;
 import org.jctools.queues.MpscBlockingConsumerArrayQueue;
 import org.jctools.queues.SpmcArrayQueue;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-@Slf4j
 public final class ConflatingMetricsAggregator implements MetricsAggregator, EventListener {
+
+  private static final Logger log = LoggerFactory.getLogger(ConflatingMetricsAggregator.class);
 
   private static final DDCache<String, UTF8BytesString> SERVICE_NAMES =
       DDCaches.newFixedSizeCache(32);
@@ -36,6 +39,7 @@ public final class ConflatingMetricsAggregator implements MetricsAggregator, Eve
 
   static final Batch POISON_PILL = Batch.NULL;
 
+  private final Set<String> ignoredResources;
   private final Queue<Batch> batchPool;
   private final ConcurrentHashMap<MetricKey, Batch> pending;
   private final ConcurrentHashMap<MetricKey, MetricKey> keys;
@@ -52,6 +56,7 @@ public final class ConflatingMetricsAggregator implements MetricsAggregator, Eve
   public ConflatingMetricsAggregator(Config config) {
     this(
         config.getWellKnownTags(),
+        config.getMetricsIgnoredResources(),
         new OkHttpSink(
             config.getAgentUrl(),
             config.getAgentTimeout(),
@@ -61,18 +66,24 @@ public final class ConflatingMetricsAggregator implements MetricsAggregator, Eve
   }
 
   ConflatingMetricsAggregator(
-      WellKnownTags wellKnownTags, Sink sink, int maxAggregates, int queueSize) {
-    this(wellKnownTags, sink, maxAggregates, queueSize, 10, SECONDS);
+      WellKnownTags wellKnownTags,
+      Set<String> ignoredResources,
+      Sink sink,
+      int maxAggregates,
+      int queueSize) {
+    this(wellKnownTags, ignoredResources, sink, maxAggregates, queueSize, 10, SECONDS);
   }
 
   ConflatingMetricsAggregator(
       WellKnownTags wellKnownTags,
+      Set<String> ignoredResources,
       Sink sink,
       int maxAggregates,
       int queueSize,
       long reportingInterval,
       TimeUnit timeUnit) {
     this(
+        ignoredResources,
         sink,
         new SerializingMetricWriter(wellKnownTags, sink),
         maxAggregates,
@@ -82,12 +93,14 @@ public final class ConflatingMetricsAggregator implements MetricsAggregator, Eve
   }
 
   ConflatingMetricsAggregator(
+      Set<String> ignoredResources,
       Sink sink,
       MetricWriter metricWriter,
       int maxAggregates,
       int queueSize,
       long reportingInterval,
       TimeUnit timeUnit) {
+    this.ignoredResources = ignoredResources;
     this.inbox = new MpscBlockingConsumerArrayQueue<>(queueSize);
     this.batchPool = new SpmcArrayQueue<>(maxAggregates);
     this.pending = new ConcurrentHashMap<>(maxAggregates * 4 / 3, 0.75f);
@@ -110,23 +123,29 @@ public final class ConflatingMetricsAggregator implements MetricsAggregator, Eve
 
   @Override
   public void start() {
-    sink.register(this);
-    thread.start();
-    cancellation =
-        AgentTaskScheduler.INSTANCE.scheduleAtFixedRate(
-            new ReportTask(),
-            this,
-            reportingInterval,
-            reportingInterval,
-            reportingIntervalTimeUnit);
+    if (sink.validate()) {
+      sink.register(this);
+      thread.start();
+      cancellation =
+          AgentTaskScheduler.INSTANCE.scheduleAtFixedRate(
+              new ReportTask(),
+              this,
+              reportingInterval,
+              reportingInterval,
+              reportingIntervalTimeUnit);
+    } else {
+      enabled = false;
+    }
   }
 
   @Override
   public void report() {
     boolean published;
+    int attempts = 0;
     do {
       published = inbox.offer(REPORT);
-    } while (!published);
+      ++attempts;
+    } while (!published && attempts < 10);
   }
 
   @Override
@@ -136,6 +155,10 @@ public final class ConflatingMetricsAggregator implements MetricsAggregator, Eve
       for (CoreSpan<?> span : trace) {
         boolean isTopLevel = span.isTopLevel();
         if (isTopLevel || span.isMeasured()) {
+          if (ignoredResources.contains(span.getResourceName().toString())) {
+            // skip publishing all children
+            return false;
+          }
           forceKeep |= publish(span, isTopLevel);
         }
       }
@@ -228,6 +251,10 @@ public final class ConflatingMetricsAggregator implements MetricsAggregator, Eve
 
   private void disable() {
     this.enabled = false;
+    AgentTaskScheduler.Scheduled<?> cancellation = this.cancellation;
+    if (null != cancellation) {
+      cancellation.cancel();
+    }
     this.thread.interrupt();
     this.pending.clear();
     this.batchPool.clear();

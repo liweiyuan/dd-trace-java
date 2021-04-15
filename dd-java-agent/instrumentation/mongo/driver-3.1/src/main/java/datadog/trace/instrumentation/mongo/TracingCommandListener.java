@@ -14,21 +14,27 @@ import com.mongodb.event.CommandStartedEvent;
 import com.mongodb.event.CommandSucceededEvent;
 import datadog.trace.api.cache.DDCache;
 import datadog.trace.api.cache.DDCaches;
+import datadog.trace.bootstrap.ContextStore;
 import datadog.trace.bootstrap.instrumentation.api.AgentScope;
 import datadog.trace.bootstrap.instrumentation.api.AgentSpan;
 import datadog.trace.bootstrap.instrumentation.api.Tags;
 import datadog.trace.bootstrap.instrumentation.api.UTF8BytesString;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import lombok.extern.slf4j.Slf4j;
+import org.bson.BsonDocument;
+import org.bson.ByteBuf;
 
-@Slf4j
 public class TracingCommandListener implements CommandListener {
 
   private static final DDCache<String, UTF8BytesString> COMMAND_NAMES =
       DDCaches.newUnboundedCache(16);
 
   private final Map<Integer, AgentSpan> spanMap = new ConcurrentHashMap<>();
+  private final ContextStore<BsonDocument, ByteBuf> byteBufAccessor;
+
+  public TracingCommandListener(ContextStore<BsonDocument, ByteBuf> byteBufAccessor) {
+    this.byteBufAccessor = byteBufAccessor;
+  }
 
   @Override
   public void commandStarted(final CommandStartedEvent event) {
@@ -48,7 +54,7 @@ public class TracingCommandListener implements CommandListener {
                 Tags.DB_OPERATION,
                 COMMAND_NAMES.computeIfAbsent(event.getCommandName(), UTF8_ENCODE));
       }
-      DECORATE.onStatement(span, event.getCommand());
+      DECORATE.onStatement(span, event.getCommand(), byteBufAccessor);
       spanMap.put(event.getRequestId(), span);
     }
   }

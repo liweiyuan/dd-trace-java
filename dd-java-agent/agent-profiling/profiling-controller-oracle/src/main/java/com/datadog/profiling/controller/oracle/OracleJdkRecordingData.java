@@ -16,21 +16,18 @@
 package com.datadog.profiling.controller.oracle;
 
 import com.datadog.profiling.controller.RecordingData;
+import com.datadog.profiling.controller.RecordingInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.Instant;
 import java.util.Date;
 import javax.annotation.Nonnull;
 import javax.management.ObjectName;
-import lombok.extern.slf4j.Slf4j;
 
 /** Implementation for profiling recordings. */
-@Slf4j
-public class OracleJdkRecordingData implements RecordingData {
+public class OracleJdkRecordingData extends RecordingData {
   private final ObjectName recordingId;
   private final String name;
-  private final Instant start;
-  private final Instant end;
 
   private final JfrMBeanHelper helper;
 
@@ -40,17 +37,16 @@ public class OracleJdkRecordingData implements RecordingData {
       @Nonnull Instant start,
       @Nonnull Instant end,
       @Nonnull JfrMBeanHelper helper) {
+    super(start, end);
     this.name = name;
     this.recordingId = recordingId;
-    this.start = start;
-    this.end = end;
     this.helper = helper;
   }
 
   @Override
   @Nonnull
-  public InputStream getStream() throws IOException {
-    return new JfrRecordingStream();
+  public RecordingInputStream getStream() throws IOException {
+    return new RecordingInputStream(new JfrRecordingStream());
   }
 
   @Override
@@ -67,18 +63,6 @@ public class OracleJdkRecordingData implements RecordingData {
   @Override
   public String toString() {
     return "OracleJdkRecording: " + getName();
-  }
-
-  @Override
-  @Nonnull
-  public Instant getStart() {
-    return start;
-  }
-
-  @Override
-  @Nonnull
-  public Instant getEnd() {
-    return end;
   }
 
   private class JfrRecordingStream extends InputStream {

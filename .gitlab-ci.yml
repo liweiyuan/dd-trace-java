@@ -1,11 +1,17 @@
 stages:
-  - ci-image
   - build
   - deploy
+  - generate-signing-key
 
 variables:
   REGISTRY: 486234852809.dkr.ecr.us-east-1.amazonaws.com
-  BINTRAY_USER: robot-bintray-apm-integrations
+  SONATYPE_USERNAME: robot-sonatype-apm-java
+  DOWNSTREAM_BRANCH:
+    value: "master"
+    description: "Run a specific datadog-reliability-env branch downstream"
+  FORCE_TRIGGER:
+    value: "false"
+    description: "Set to true to override rules in the reliability-env pipeline (e.g. override 'only deploy master')"
 
 .common: &common
   tags: [ "runner:main", "size:large" ]
@@ -21,39 +27,32 @@ variables:
       - .gradle/wrapper
       - .gradle/caches
 
-ci-image:
-  stage: ci-image
-  when: manual
-  tags: ["runner:docker", "size:large"]
-  image: $REGISTRY/docker:18.03.1
-  script:
-    - docker build --tag $REGISTRY/ci/dd-trace-java:latest -f .gitlab/gitlab.dockerfile .gitlab
-    - docker push $REGISTRY/ci/dd-trace-java:latest
-
 build:
   <<: *gradle_build
   stage: build
   script:
     - GRADLE_OPTS="-Dorg.gradle.jvmargs='-Xmx1G -Xms64M' -Ddatadog.forkedMaxHeapSize=1G -Ddatadog.forkedMinHeapSize=64M" ./gradlew clean :dd-java-agent:shadowJar --build-cache --parallel --stacktrace --no-daemon --max-workers=8
+    - echo UPSTREAM_TRACER_VERSION=$(java -jar workspace/dd-java-agent/build/libs/*.jar) >> upstream.env
   artifacts:
     paths:
       - 'workspace/dd-java-agent/build/libs/*.jar'
+      - 'upstream.env'
 
-copy_to_s3:
-  <<: *common
+deploy_to_reliability_env:
   stage: deploy
-  image: $REGISTRY/ci/dd-trace-java:latest
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "master"'
-      when: on_success
-    - when: manual
-      allow_failure: true
-  script:
-    - export AWS_ACCESS_KEY_ID_REL=$(aws ssm get-parameter --region us-east-1 --name ci.dd-trace-java.secret_key_id --with-decryption --query "Parameter.Value" --out text)
-    - export AWS_SECRET_ACCESS_KEY_REL=$(aws ssm get-parameter --region us-east-1 --name ci.dd-trace-java.secret_sec_key_id --with-decryption --query "Parameter.Value" --out text)
-    - python -u .gitlab/copy_artifact_s3.py
+  when: on_success
+  trigger:
+    project: DataDog/datadog-reliability-env
+    branch: $DOWNSTREAM_BRANCH
+  variables:
+    UPSTREAM_PACKAGE_JOB: build
+    UPSTREAM_BRANCH: $CI_COMMIT_REF_NAME
+    UPSTREAM_PROJECT_ID: $CI_PROJECT_ID
+    UPSTREAM_PROJECT_NAME: $CI_PROJECT_NAME
+    UPSTREAM_COMMIT_SHA: $CI_COMMIT_SHA
+    FORCE_TRIGGER: $FORCE_TRIGGER
 
-deploy_to_bintray:
+deploy_to_sonatype:
   <<: *gradle_build
   stage: deploy
   rules:
@@ -64,5 +63,23 @@ deploy_to_bintray:
     - when: manual
       allow_failure: true
   script:
-    - export BINTRAY_API_KEY=$(aws ssm get-parameter --region us-east-1 --name ci.dd-trace-java.bintray_api_key --with-decryption --query "Parameter.Value" --out text)
-    - ./gradlew -PbintrayUser=$BINTRAY_USER -PbintrayApiKey=$BINTRAY_API_KEY -PbuildInfo.build.number=$CI_JOB_ID artifactoryPublish --max-workers=1 --build-cache --stacktrace --no-daemon
+    - export SONATYPE_PASSWORD=$(aws ssm get-parameter --region us-east-1 --name ci.dd-trace-java.sonatype_password --with-decryption --query "Parameter.Value" --out text)
+    - export GPG_PRIVATE_KEY=$(aws ssm get-parameter --region us-east-1 --name ci.dd-trace-java.signing.gpg_private_key --with-decryption --query "Parameter.Value" --out text)
+    - export GPG_PASSWORD=$(aws ssm get-parameter --region us-east-1 --name ci.dd-trace-java.signing.gpg_passphrase --with-decryption --query "Parameter.Value" --out text)
+    - ./gradlew -PbuildInfo.build.number=$CI_JOB_ID publishToSonatype closeSonatypeStagingRepository --max-workers=1 --build-cache --stacktrace --no-daemon
+
+create_key:
+  stage: generate-signing-key
+  when: manual
+  needs: []
+  tags: [ "runner:docker", "size:large" ]
+  variables:
+    PROJECT_NAME: "dd-trace-java"
+    EXPORT_TO_KEYSERVER: "true"
+  image: $REGISTRY/ci/agent-key-management-tools/gpg:1
+  script:
+    - /create.sh
+  artifacts:
+    expire_in: 13 mos
+    paths:
+      - pubkeys

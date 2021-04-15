@@ -1,14 +1,13 @@
 package datadog.trace.agent.tooling.context;
 
 import static datadog.trace.bootstrap.FieldBackedContextStores.getContextStoreId;
+import static datadog.trace.util.Strings.getInternalName;
 
-import datadog.trace.agent.tooling.Utils;
 import datadog.trace.bootstrap.ContextStore;
 import datadog.trace.bootstrap.FieldBackedContextStore;
 import datadog.trace.bootstrap.FieldBackedContextStores;
 import datadog.trace.bootstrap.InstrumentationContext;
 import java.util.Map;
-import lombok.extern.slf4j.Slf4j;
 import net.bytebuddy.asm.AsmVisitorWrapper;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.field.FieldList;
@@ -21,19 +20,23 @@ import net.bytebuddy.jar.asm.MethodVisitor;
 import net.bytebuddy.jar.asm.Opcodes;
 import net.bytebuddy.jar.asm.Type;
 import net.bytebuddy.pool.TypePool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Rewrites {@link InstrumentationContext} calls by allocating {@link ContextStore} ids during
  * transformation and using them to retrieve {@link ContextStore} instances at execution time.
  */
-@Slf4j
 final class FieldBackedContextRequestRewriter implements AsmVisitorWrapper {
 
+  private static final Logger log =
+      LoggerFactory.getLogger(FieldBackedContextRequestRewriter.class);
+
   static final String INSTRUMENTATION_CONTEXT_CLASS =
-      Utils.getInternalName(InstrumentationContext.class.getName());
+      getInternalName(InstrumentationContext.class.getName());
 
   static final String FIELD_BACKED_CONTEXT_STORES_CLASS =
-      Utils.getInternalName(FieldBackedContextStores.class.getName());
+      getInternalName(FieldBackedContextStores.class.getName());
 
   static final String GET_METHOD = "get";
   static final String GET_METHOD_DESCRIPTOR =

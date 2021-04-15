@@ -2,7 +2,7 @@ package datadog.trace.core.scopemanager;
 
 import static datadog.trace.api.ConfigDefaults.DEFAULT_ASYNC_PROPAGATING;
 
-import com.timgroup.statsd.StatsDClient;
+import datadog.trace.api.StatsDClient;
 import datadog.trace.bootstrap.instrumentation.api.AgentScope;
 import datadog.trace.bootstrap.instrumentation.api.AgentScopeManager;
 import datadog.trace.bootstrap.instrumentation.api.AgentSpan;
@@ -11,13 +11,12 @@ import datadog.trace.bootstrap.instrumentation.api.AgentTracer;
 import datadog.trace.bootstrap.instrumentation.api.ScopeSource;
 import datadog.trace.context.ScopeListener;
 import datadog.trace.context.TraceScope;
-import datadog.trace.core.jfr.DDScopeEvent;
-import datadog.trace.core.jfr.DDScopeEventFactory;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * The primary ScopeManager. This class has ownership of the core ThreadLocal containing the
@@ -25,8 +24,9 @@ import lombok.extern.slf4j.Slf4j;
  * from being reported even if all related spans are finished. It also delegates to other
  * ScopeInterceptors to provide additional functionality.
  */
-@Slf4j
 public class ContinuableScopeManager implements AgentScopeManager {
+
+  private static final Logger log = LoggerFactory.getLogger(ContinuableScopeManager.class);
   final ThreadLocal<ScopeStack> tlsScopeStack =
       new ThreadLocal<ScopeStack>() {
         @Override
@@ -35,8 +35,8 @@ public class ContinuableScopeManager implements AgentScopeManager {
         }
       };
 
-  private final DDScopeEventFactory scopeEventFactory;
   private final List<ScopeListener> scopeListeners;
+  private final List<ExtendedScopeListener> extendedScopeListeners;
   private final int depthLimit;
   private final StatsDClient statsDClient;
   private final boolean strictMode;
@@ -44,33 +44,16 @@ public class ContinuableScopeManager implements AgentScopeManager {
 
   public ContinuableScopeManager(
       final int depthLimit,
-      final DDScopeEventFactory scopeEventFactory,
       final StatsDClient statsDClient,
       final boolean strictMode,
       final boolean inheritAsyncPropagation) {
-    this(
-        depthLimit,
-        scopeEventFactory,
-        statsDClient,
-        strictMode,
-        inheritAsyncPropagation,
-        new CopyOnWriteArrayList<ScopeListener>());
-  }
 
-  // Separate constructor to allow passing scopeListeners to super arg and assign locally.
-  private ContinuableScopeManager(
-      final int depthLimit,
-      final DDScopeEventFactory scopeEventFactory,
-      final StatsDClient statsDClient,
-      final boolean strictMode,
-      final boolean inheritAsyncPropagation,
-      final List<ScopeListener> scopeListeners) {
-    this.scopeEventFactory = scopeEventFactory;
     this.depthLimit = depthLimit == 0 ? Integer.MAX_VALUE : depthLimit;
     this.statsDClient = statsDClient;
     this.strictMode = strictMode;
     this.inheritAsyncPropagation = inheritAsyncPropagation;
-    this.scopeListeners = scopeListeners;
+    this.scopeListeners = new CopyOnWriteArrayList<>();
+    this.extendedScopeListeners = new CopyOnWriteArrayList<>();
   }
 
   @Override
@@ -160,9 +143,20 @@ public class ContinuableScopeManager implements AgentScopeManager {
   public void addScopeListener(final ScopeListener listener) {
     scopeListeners.add(listener);
     log.debug("Added scope listener {}", listener);
-    if (active() != null) {
+    AgentSpan activeSpan = activeSpan();
+    if (activeSpan != null) {
       // Notify the listener about the currently active scope
       listener.afterScopeActivated();
+    }
+  }
+
+  public void addExtendedScopeListener(final ExtendedScopeListener listener) {
+    extendedScopeListeners.add(listener);
+    log.debug("Added scope listener {}", listener);
+    AgentSpan activeSpan = activeSpan();
+    if (activeSpan != null) {
+      // Notify the listener about the currently active scope
+      listener.afterScopeActivated(activeSpan.getTraceId(), activeSpan.context().getSpanId());
     }
   }
 
@@ -182,8 +176,6 @@ public class ContinuableScopeManager implements AgentScopeManager {
 
     private short referenceCount = 1;
 
-    private final DDScopeEvent event;
-
     private final AgentSpan span;
 
     ContinuableScope(
@@ -194,7 +186,6 @@ public class ContinuableScopeManager implements AgentScopeManager {
         final boolean isAsyncPropagating) {
       this.isAsyncPropagating = isAsyncPropagating;
       this.span = span;
-      this.event = scopeManager.scopeEventFactory.create(span.context());
       this.scopeManager = scopeManager;
       this.continuation = continuation;
       this.source = source;
@@ -242,9 +233,20 @@ public class ContinuableScopeManager implements AgentScopeManager {
      * I would hope this becomes unnecessary.
      */
     final void onProperClose() {
-      event.finish();
       for (final ScopeListener listener : scopeManager.scopeListeners) {
-        listener.afterScopeClosed();
+        try {
+          listener.afterScopeClosed();
+        } catch (Exception e) {
+          log.debug("ScopeListener threw exception in close()", e);
+        }
+      }
+
+      for (final ExtendedScopeListener listener : scopeManager.extendedScopeListeners) {
+        try {
+          listener.afterScopeClosed();
+        } catch (Exception e) {
+          log.debug("ScopeListener threw exception in close()", e);
+        }
       }
     }
 
@@ -308,9 +310,20 @@ public class ContinuableScopeManager implements AgentScopeManager {
 
     public void afterActivated() {
       for (final ScopeListener listener : scopeManager.scopeListeners) {
-        listener.afterScopeActivated();
+        try {
+          listener.afterScopeActivated();
+        } catch (Throwable e) {
+          log.debug("ScopeListener threw exception in afterActivated()", e);
+        }
       }
-      event.start();
+
+      for (final ExtendedScopeListener listener : scopeManager.extendedScopeListeners) {
+        try {
+          listener.afterScopeActivated(span.getTraceId(), span.context().getSpanId());
+        } catch (Throwable e) {
+          log.debug("ExtendedScopeListener threw exception in afterActivated()", e);
+        }
+      }
     }
   }
 

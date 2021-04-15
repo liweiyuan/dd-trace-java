@@ -11,12 +11,15 @@ import static net.bytebuddy.matcher.ElementMatchers.takesArguments;
 import com.google.auto.service.AutoService;
 import com.mongodb.event.CommandListener;
 import datadog.trace.agent.tooling.Instrumenter;
+import datadog.trace.bootstrap.InstrumentationContext;
 import java.util.List;
 import java.util.Map;
 import net.bytebuddy.asm.Advice;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.matcher.ElementMatcher;
+import org.bson.BsonDocument;
+import org.bson.ByteBuf;
 
 @AutoService(Instrumenter.class)
 public final class MongoAsyncClientInstrumentation extends Instrumenter.Tracing {
@@ -41,8 +44,18 @@ public final class MongoAsyncClientInstrumentation extends Instrumenter.Tracing 
   @Override
   public String[] helperClassNames() {
     return new String[] {
-      packageName + ".MongoClientDecorator", packageName + ".TracingCommandListener"
+      packageName + ".MongoClientDecorator",
+      packageName + ".BsonScrubber",
+      packageName + ".BsonScrubber$1",
+      packageName + ".BsonScrubber$2",
+      packageName + ".Context",
+      packageName + ".TracingCommandListener"
     };
+  }
+
+  @Override
+  public Map<String, String> contextStore() {
+    return singletonMap("org.bson.BsonDocument", "org.bson.ByteBuf");
   }
 
   @Override
@@ -61,7 +74,9 @@ public final class MongoAsyncClientInstrumentation extends Instrumenter.Tracing 
           && listeners.get(listeners.size() - 1).getClass().getName().startsWith("datadog.")) {
         return;
       }
-      listeners.add(new TracingCommandListener());
+      listeners.add(
+          new TracingCommandListener(
+              InstrumentationContext.get(BsonDocument.class, ByteBuf.class)));
     }
   }
 }

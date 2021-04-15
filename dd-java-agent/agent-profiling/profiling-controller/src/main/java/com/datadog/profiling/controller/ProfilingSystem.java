@@ -22,11 +22,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Sets up the profiling strategy and schedules the profiling recordings. */
-@Slf4j
 public final class ProfilingSystem {
+  private static final Logger log = LoggerFactory.getLogger(ProfilingSystem.class);
   static final String RECORDING_NAME = "dd-profiling";
 
   private static final long TERMINATION_TIMEOUT = 10;
@@ -131,7 +132,7 @@ public final class ProfilingSystem {
   private void startProfilingRecording() {
     try {
       final Instant now = Instant.now();
-
+      log.debug("Initiating profiling recording");
       recording = controller.createRecording(RECORDING_NAME);
       scheduler.scheduleAtFixedRate(
           SnapshotRecording::snapshot,
@@ -188,10 +189,12 @@ public final class ProfilingSystem {
     public void snapshot() {
       final RecordingType recordingType = RecordingType.CONTINUOUS;
       try {
-        final RecordingData recordingData = recording.snapshot(lastSnapshot, Instant.now());
+        log.debug("Creating profiler snapshot");
+        Instant now = Instant.now();
+        final RecordingData recordingData = recording.snapshot(lastSnapshot, now);
         // The hope here is that we do not get chunk rotated after taking snapshot and before we
-        // take this timestamp otherwise we will start losing data.
-        lastSnapshot = Instant.now();
+        // take this timestamp otherwise we will start losing data
+        lastSnapshot = now;
         if (recordingData != null) {
           dataListener.onNewData(recordingType, recordingData);
         }

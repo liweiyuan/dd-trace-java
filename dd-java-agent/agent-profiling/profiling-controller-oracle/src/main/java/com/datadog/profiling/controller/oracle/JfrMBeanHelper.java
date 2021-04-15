@@ -32,10 +32,13 @@ import javax.management.openmbean.OpenDataException;
 import javax.management.openmbean.OpenType;
 import javax.management.openmbean.SimpleType;
 import javax.management.openmbean.TabularData;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-@Slf4j
 final class JfrMBeanHelper {
+
+  private static final Logger log = LoggerFactory.getLogger(JfrMBeanHelper.class);
+
   private static final Pattern WHITESPACE_SPLITTER = Pattern.compile("\\s+");
   private static final String MC_BEAN_CLASS = "com.sun.management.MissionControl";
   private static final ObjectName MC_BEAN_NAME =
@@ -107,7 +110,7 @@ final class JfrMBeanHelper {
   private final MBeanServer server;
 
   private static void initialize() throws IOException {
-    log.warn("Initializing MBean helper");
+    log.debug("Initializing MBean helper");
     if (initPhase.compareAndSet(0, 1)) {
       registerMBeans();
 
@@ -126,7 +129,7 @@ final class JfrMBeanHelper {
     try {
       try {
         server.createMBean(MC_BEAN_CLASS, MC_BEAN_NAME);
-        log.warn("MissionControl MBean created");
+        log.debug("MissionControl MBean created");
       } catch (InstanceAlreadyExistsException iaee) {
         // Ok, it already exists.
       } catch (MBeanException mbe) {

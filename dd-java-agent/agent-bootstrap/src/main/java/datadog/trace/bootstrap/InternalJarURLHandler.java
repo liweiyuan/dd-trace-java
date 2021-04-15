@@ -1,6 +1,6 @@
 package datadog.trace.bootstrap;
 
-import datadog.trace.bootstrap.instrumentation.api.Pair;
+import datadog.trace.api.Pair;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
@@ -12,20 +12,22 @@ import java.net.URLConnection;
 import java.net.URLStreamHandler;
 import java.security.Permission;
 import java.util.Enumeration;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-@Slf4j
 public class InternalJarURLHandler extends URLStreamHandler {
+
+  private static final Logger log = LoggerFactory.getLogger(InternalJarURLHandler.class);
 
   private static final WeakReference<Pair<String, JarEntry>> NULL = new WeakReference<>(null);
 
   private final String name;
   private final FileNotInInternalJar notFound;
-  private final Map<String, Lock> packages = new HashMap<>();
+  private final Set<String> packages = new HashSet<>();
   private final JarFile bootstrapJarFile;
 
   private WeakReference<Pair<String, JarEntry>> cache = NULL;
@@ -48,7 +50,7 @@ public class InternalJarURLHandler extends URLStreamHandler {
               if (name.length() > prefix) {
                 String dir = name.substring(prefix, name.length() - 1);
                 String currentPackage = dir.replace('/', '.');
-                packages.put(currentPackage, new Lock(currentPackage));
+                packages.add(currentPackage);
               }
             }
           }
@@ -64,12 +66,12 @@ public class InternalJarURLHandler extends URLStreamHandler {
     this.bootstrapJarFile = jarFile;
   }
 
-  Map<String, Lock> getPackages() {
+  Set<String> getPackages() {
     return packages;
   }
 
-  Lock getPackageLock(String packageName) {
-    return packages.get(packageName);
+  boolean hasPackage(String packageName) {
+    return packages.contains(packageName);
   }
 
   @Override
@@ -80,7 +82,7 @@ public class InternalJarURLHandler extends URLStreamHandler {
       // This is called by the SecureClassLoader trying to obtain permissions
 
       // nullInputStream() is not available until Java 11
-      return new InternalJarURLConnection(url, new ByteArrayInputStream(new byte[0]));
+      return new InternalJarURLConnection(url, new ByteArrayInputStream(new byte[0]), 0);
     }
     // believe it or not, we're going to get called twice for this,
     // and the key will be a new object each time.
@@ -101,15 +103,18 @@ public class InternalJarURLHandler extends URLStreamHandler {
       // so dismiss cache after a hit
       this.cache = NULL;
     }
-    return new InternalJarURLConnection(url, bootstrapJarFile.getInputStream(pair.getRight()));
+    return new InternalJarURLConnection(
+        url, bootstrapJarFile.getInputStream(pair.getRight()), (int) pair.getRight().getSize());
   }
 
   private static class InternalJarURLConnection extends URLConnection {
     private final InputStream inputStream;
+    private final int contentLength;
 
-    private InternalJarURLConnection(final URL url, final InputStream inputStream) {
+    private InternalJarURLConnection(URL url, InputStream inputStream, int contentLength) {
       super(url);
       this.inputStream = inputStream;
+      this.contentLength = contentLength;
     }
 
     @Override
@@ -127,6 +132,11 @@ public class InternalJarURLHandler extends URLStreamHandler {
       // No permissions needed because all classes are in memory
       return null;
     }
+
+    @Override
+    public int getContentLength() {
+      return contentLength;
+    }
   }
 
   private static class FileNotInInternalJar extends IOException {
@@ -138,23 +148,6 @@ public class InternalJarURLHandler extends URLStreamHandler {
     @Override
     public Throwable fillInStackTrace() {
       return this;
-    }
-  }
-
-  /**
-   * This {@link Lock} allows the class loading code to check if failures to find a class should be
-   * delegated to {@code findClass} or if it should fall through to {@code super.loadClass} which is
-   * needed for classes that we inject that live in the {@code java.*} package.
-   */
-  public static final class Lock {
-    private final boolean delegateFailureToFindClass;
-
-    public Lock(String packageName) {
-      this.delegateFailureToFindClass = !packageName.startsWith("java.");
-    }
-
-    public boolean delegateFailureToFindClass() {
-      return delegateFailureToFindClass;
     }
   }
 }

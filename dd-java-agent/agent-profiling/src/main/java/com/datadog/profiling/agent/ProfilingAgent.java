@@ -9,15 +9,18 @@ import com.datadog.profiling.controller.ProfilingSystem;
 import com.datadog.profiling.controller.UnsupportedEnvironmentException;
 import com.datadog.profiling.uploader.ProfileUploader;
 import datadog.trace.api.Config;
+import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.time.Duration;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Profiling agent implementation */
-@Slf4j
 public class ProfilingAgent {
+
+  private static final Logger log = LoggerFactory.getLogger(ProfilingAgent.class);
 
   private static final Predicate<String> API_KEY_REGEX =
       Pattern.compile("^[0-9a-fA-F]{32}$").asPredicate();
@@ -29,7 +32,7 @@ public class ProfilingAgent {
    * profiling before any other tool, and then attempt to start it again at normal time
    */
   public static synchronized void run(final boolean isStartingFirst)
-      throws IllegalArgumentException {
+      throws IllegalArgumentException, IOException {
     if (profiler == null) {
       final Config config = Config.get();
       if (isStartingFirst && !config.isProfilingStartForceFirst()) {

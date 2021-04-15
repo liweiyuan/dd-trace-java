@@ -29,10 +29,6 @@ ext.generalShadowJarConfig = {
 
   exclude '**/module-info.class'
 
-  dependencies {
-    exclude(dependency("org.projectlombok:lombok:$versions.lombok"))
-  }
-
   // Prevents conflict with other SLF4J instances. Important for premain.
   relocate 'org.slf4j', 'datadog.slf4j'
   // rewrite dependencies calling Logger.getLogger
@@ -107,8 +103,13 @@ shadowJar generalShadowJarConfig >> {
 }
 
 // We don't want bundled dependencies to show up in the pom.
-modifyPom {
-  dependencies.removeAll { true }
+tasks.withType(GenerateMavenPom).configureEach { task ->
+  doFirst {
+    task.pom.withXml { XmlProvider provider ->
+      Node dependencies = provider.asNode().dependencies[0]
+      dependencies.children().clear()
+    }
+  }
 }
 
 dependencies {
