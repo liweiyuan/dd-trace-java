@@ -105,6 +105,12 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
     null
   }
 
+  boolean tagServerSpanWithRoute() {
+    false
+  }
+
+
+
   enum ServerEndpoint {
     SUCCESS("success", 200, "success"),
     REDIRECT("redirect", 302, "/redirected"),
@@ -158,7 +164,8 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
     }
 
     URI resolve(URI address) {
-      return address.resolve(path)
+      // must be relative path to allow for servlet context
+      return address.resolve(rawPath())
     }
 
     String resource(String method, URI address, String pathParam) {
@@ -436,8 +443,8 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
 
     expect:
     if (bubblesResponse()) {
-      response.code() == ERROR.status
-      response.body().string() == ERROR.body
+      assert response.body().string() == ERROR.body
+      assert response.code() == ERROR.status
     }
 
     and:
@@ -605,9 +612,6 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
         }
         defaultTags()
       }
-      metrics {
-        defaultMetrics()
-      }
     }
   }
 
@@ -625,6 +629,7 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
 
   // parent span must be cast otherwise it breaks debugging classloading (junit loads it early)
   void serverSpan(TraceAssert trace, BigInteger traceID = null, BigInteger parentID = null, String method = "GET", ServerEndpoint endpoint = SUCCESS) {
+    boolean tagServerSpanWithRoute = tagServerSpanWithRoute()
     trace.span {
       serviceName expectedServiceName()
       operationName expectedOperationName()
@@ -641,10 +646,16 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
         "$Tags.COMPONENT" component
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
         "$Tags.PEER_PORT" Integer
-        "$Tags.PEER_HOST_IPV4" { endpoint == FORWARDED ? it == endpoint.body : (it == null || it == "127.0.0.1") }
+        "$Tags.PEER_HOST_IPV4" { it == "127.0.0.1" || (endpoint == FORWARDED && it == endpoint.body) }
         "$Tags.HTTP_URL" "${endpoint.resolve(address)}"
         "$Tags.HTTP_METHOD" method
         "$Tags.HTTP_STATUS" endpoint.status
+        if (endpoint == FORWARDED) {
+          "$Tags.HTTP_FORWARDED_IP" endpoint.body
+        }
+        if (tagServerSpanWithRoute) {
+          "$Tags.HTTP_ROUTE" String
+        }
         if (endpoint.query) {
           "$DDTags.HTTP_QUERY" endpoint.query
         }
@@ -653,9 +664,6 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
         //          "$DDTags.HTTP_FRAGMENT" endpoint.fragment
         //        }
         defaultTags(true)
-      }
-      metrics {
-        defaultMetrics()
       }
     }
   }

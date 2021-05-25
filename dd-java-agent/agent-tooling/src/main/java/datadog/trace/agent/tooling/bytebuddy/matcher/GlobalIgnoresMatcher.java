@@ -1,6 +1,6 @@
 package datadog.trace.agent.tooling.bytebuddy.matcher;
 
-import java.util.regex.Pattern;
+import datadog.trace.agent.tooling.bytebuddy.DDRediscoveryStrategy;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.matcher.ElementMatcher;
 
@@ -22,9 +22,6 @@ import net.bytebuddy.matcher.ElementMatcher;
  */
 public class GlobalIgnoresMatcher<T extends TypeDescription>
     extends ElementMatcher.Junction.AbstractBase<T> {
-
-  private static final Pattern COM_MCHANGE_PROXY =
-      Pattern.compile("^com\\.mchange\\.v2\\.c3p0\\..*Proxy$");
 
   public static <T extends TypeDescription> ElementMatcher.Junction<T> globalIgnoresMatcher(
       final boolean skipAdditionalLibraryMatcher) {
@@ -51,6 +48,8 @@ public class GlobalIgnoresMatcher<T extends TypeDescription>
    * Be very careful about the types of matchers used in this section as they are called on every
    * class load, so they must be fast. Generally speaking try to only use name matchers as they
    * don't have to load additional info.
+   *
+   * @see DDRediscoveryStrategy#shouldRetransformBootstrapClass(String)
    */
   @Override
   public boolean matches(final T target) {
@@ -77,7 +76,7 @@ public class GlobalIgnoresMatcher<T extends TypeDescription>
             return !name.startsWith("com.sun.messaging.")
                 && !name.startsWith("com.sun.jersey.api.client");
           }
-          if (COM_MCHANGE_PROXY.matcher(name).matches()) {
+          if (name.startsWith("com.mchange.v2.c3p0.") && name.endsWith("Proxy")) {
             return true;
           }
         }
@@ -120,6 +119,10 @@ public class GlobalIgnoresMatcher<T extends TypeDescription>
         if (name.startsWith("jdk.")) {
           return true;
         }
+        /**
+         * Any changes involving bootstrap types should also be reflected in {@link
+         * DDRediscoveryStrategy#shouldRetransformBootstrapClass(String)}
+         */
         if (name.startsWith("java.")) {
           // allow exception profiling instrumentation
           if (name.equals("java.lang.Throwable")) {
@@ -177,6 +180,10 @@ public class GlobalIgnoresMatcher<T extends TypeDescription>
       case 'r' - 'a':
         break;
       case 's' - 'a':
+        /**
+         * Any changes involving bootstrap types should also be reflected in {@link
+         * DDRediscoveryStrategy#shouldRetransformBootstrapClass(String)}
+         */
         if (name.startsWith("sun.")) {
           return !name.startsWith("sun.net.www.protocol.")
               && !name.startsWith("sun.rmi.server")
@@ -189,18 +196,6 @@ public class GlobalIgnoresMatcher<T extends TypeDescription>
 
     final int firstDollar = name.indexOf('$');
     if (firstDollar > -1) {
-      // clojure class patterns
-      if (name.startsWith("loader__", firstDollar + 1)) {
-        return true;
-      }
-      int dollar = firstDollar;
-      while (dollar > -1) {
-        if (name.startsWith("fn__", dollar + 1) || name.startsWith("reify__", dollar + 1)) {
-          return true;
-        }
-        dollar = name.indexOf('$', dollar + 1);
-      }
-
       if (name.contains("$JaxbAccessor")
           || name.contains("CGLIB$$")
           || name.contains("$__sisu")

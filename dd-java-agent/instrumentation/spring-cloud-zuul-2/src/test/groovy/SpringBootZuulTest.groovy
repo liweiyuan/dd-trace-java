@@ -1,4 +1,5 @@
 import datadog.trace.agent.test.asserts.TraceAssert
+import datadog.trace.agent.test.base.HttpServer
 import datadog.trace.agent.test.base.HttpServerTest
 import datadog.trace.api.DDSpanTypes
 import datadog.trace.api.DDTags
@@ -6,10 +7,12 @@ import datadog.trace.bootstrap.instrumentation.api.Tags
 import datadog.trace.instrumentation.servlet3.Servlet3Decorator
 import datadog.trace.instrumentation.springweb.SpringWebHttpServerDecorator
 import org.springframework.boot.SpringApplication
+import org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext
 import org.springframework.context.ConfigurableApplicationContext
 import org.springframework.web.servlet.view.RedirectView
 
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.EXCEPTION
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.FORWARDED
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.NOT_FOUND
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.REDIRECT
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.SUCCESS
@@ -17,17 +20,38 @@ import static java.util.Collections.singletonMap
 
 class SpringBootZuulTest extends HttpServerTest<ConfigurableApplicationContext> {
 
-  @Override
-  ConfigurableApplicationContext startServer(int port) {
+  class SpringBootServer implements HttpServer {
+    def port = 0
+    def context
     def app = new SpringApplication(AppConfig, TestController)
-    app.setDefaultProperties(singletonMap("server.port", port))
-    def context = app.run()
-    return context
+
+    @Override
+    void start() {
+      app.setDefaultProperties(singletonMap("server.port", 0))
+      context = app.run() as ServletWebServerApplicationContext
+      port = context.webServer.port
+      assert port > 0
+    }
+
+    @Override
+    void stop() {
+      context.close()
+    }
+
+    @Override
+    URI address() {
+      return new URI("http://localhost:$port/")
+    }
+
+    @Override
+    String toString() {
+      return this.class.name
+    }
   }
 
   @Override
-  void stopServer(ConfigurableApplicationContext ctx) {
-    ctx.close()
+  HttpServer server() {
+    return new SpringBootServer()
   }
 
   @Override
@@ -136,6 +160,7 @@ class SpringBootZuulTest extends HttpServerTest<ConfigurableApplicationContext> 
       tags {
         "$Tags.COMPONENT" "java-web-servlet-dispatcher"
         "servlet.path" endpoint.path
+        "$Tags.HTTP_ROUTE" String
 
         if (endpoint.throwsException) {
           "error.msg" EXCEPTION.body
@@ -185,11 +210,15 @@ class SpringBootZuulTest extends HttpServerTest<ConfigurableApplicationContext> 
       tags {
         "$Tags.COMPONENT" component
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
-        "$Tags.PEER_HOST_IPV4" { endpoint == ServerEndpoint.FORWARDED ? it == endpoint.body : (it == null || it == "127.0.0.1") }
+        "$Tags.PEER_HOST_IPV4" "127.0.0.1"
         "$Tags.PEER_PORT" Integer
         "$Tags.HTTP_URL" "${endpoint.resolve(address)}"
         "$Tags.HTTP_METHOD" method
         "$Tags.HTTP_STATUS" endpoint.status
+        "$Tags.HTTP_ROUTE" String
+        if (endpoint == FORWARDED) {
+          "$Tags.HTTP_FORWARDED_IP" endpoint.body
+        }
         "servlet.path" endpoint.path
         if (endpoint.errored) {
           "error.msg" { it == null || it == EXCEPTION.body }

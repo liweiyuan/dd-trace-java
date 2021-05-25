@@ -1,8 +1,10 @@
 package datadog.trace.core.scopemanager;
 
 import static datadog.trace.api.ConfigDefaults.DEFAULT_ASYNC_PROPAGATING;
+import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.NoopAgentSpan;
 
 import datadog.trace.api.StatsDClient;
+import datadog.trace.api.scopemanager.ExtendedScopeListener;
 import datadog.trace.bootstrap.instrumentation.api.AgentScope;
 import datadog.trace.bootstrap.instrumentation.api.AgentScopeManager;
 import datadog.trace.bootstrap.instrumentation.api.AgentSpan;
@@ -141,20 +143,24 @@ public class ContinuableScopeManager implements AgentScopeManager {
 
   /** Attach a listener to scope activation events */
   public void addScopeListener(final ScopeListener listener) {
-    scopeListeners.add(listener);
-    log.debug("Added scope listener {}", listener);
-    AgentSpan activeSpan = activeSpan();
-    if (activeSpan != null) {
-      // Notify the listener about the currently active scope
-      listener.afterScopeActivated();
+    if (listener instanceof ExtendedScopeListener) {
+      addExtendedScopeListener((ExtendedScopeListener) listener);
+    } else {
+      scopeListeners.add(listener);
+      log.debug("Added scope listener {}", listener);
+      AgentSpan activeSpan = activeSpan();
+      if (activeSpan != null) {
+        // Notify the listener about the currently active scope
+        listener.afterScopeActivated();
+      }
     }
   }
 
-  public void addExtendedScopeListener(final ExtendedScopeListener listener) {
+  private void addExtendedScopeListener(final ExtendedScopeListener listener) {
     extendedScopeListeners.add(listener);
     log.debug("Added scope listener {}", listener);
     AgentSpan activeSpan = activeSpan();
-    if (activeSpan != null) {
+    if (activeSpan != null && !(activeSpan instanceof NoopAgentSpan)) {
       // Notify the listener about the currently active scope
       listener.afterScopeActivated(activeSpan.getTraceId(), activeSpan.context().getSpanId());
     }
@@ -172,7 +178,7 @@ public class ContinuableScopeManager implements AgentScopeManager {
     /** Flag to propagate this scope across async boundaries. */
     private boolean isAsyncPropagating;
 
-    private final byte source;
+    private byte flags;
 
     private short referenceCount = 1;
 
@@ -188,7 +194,7 @@ public class ContinuableScopeManager implements AgentScopeManager {
       this.span = span;
       this.scopeManager = scopeManager;
       this.continuation = continuation;
-      this.source = source;
+      this.flags = source;
     }
 
     @Override
@@ -204,7 +210,7 @@ public class ContinuableScopeManager implements AgentScopeManager {
 
         scopeManager.statsDClient.incrementCounter("scope.close.error");
 
-        if (source == ScopeSource.MANUAL.id()) {
+        if (source() == ScopeSource.MANUAL.id()) {
           scopeManager.statsDClient.incrementCounter("scope.user.close.error");
 
           if (scopeManager.strictMode) {
@@ -239,6 +245,10 @@ public class ContinuableScopeManager implements AgentScopeManager {
         } catch (Exception e) {
           log.debug("ScopeListener threw exception in close()", e);
         }
+      }
+
+      if (!notifiedOnActivate()) {
+        return;
       }
 
       for (final ExtendedScopeListener listener : scopeManager.extendedScopeListeners) {
@@ -287,7 +297,7 @@ public class ContinuableScopeManager implements AgentScopeManager {
     @Override
     public ContinuableScopeManager.Continuation capture() {
       return isAsyncPropagating
-          ? new SingleContinuation(scopeManager, span, source).register()
+          ? new SingleContinuation(scopeManager, span, source()).register()
           : null;
     }
 
@@ -299,7 +309,7 @@ public class ContinuableScopeManager implements AgentScopeManager {
     @Override
     public ContinuableScopeManager.Continuation captureConcurrent() {
       return isAsyncPropagating
-          ? new ConcurrentContinuation(scopeManager, span, source).register()
+          ? new ConcurrentContinuation(scopeManager, span, source()).register()
           : null;
     }
 
@@ -317,6 +327,11 @@ public class ContinuableScopeManager implements AgentScopeManager {
         }
       }
 
+      if (span.eligibleForDropping()) {
+        return;
+      }
+      flags |= 0x80;
+
       for (final ExtendedScopeListener listener : scopeManager.extendedScopeListeners) {
         try {
           listener.afterScopeActivated(span.getTraceId(), span.context().getSpanId());
@@ -324,6 +339,14 @@ public class ContinuableScopeManager implements AgentScopeManager {
           log.debug("ExtendedScopeListener threw exception in afterActivated()", e);
         }
       }
+    }
+
+    private byte source() {
+      return (byte) (flags & 0x7F);
+    }
+
+    private boolean notifiedOnActivate() {
+      return flags < 0;
     }
   }
 
@@ -400,6 +423,7 @@ public class ContinuableScopeManager implements AgentScopeManager {
     }
 
     Continuation register() {
+      spanUnderScope.startThreadMigration();
       trace.registerContinuation(this);
       return this;
     }
@@ -427,6 +451,7 @@ public class ContinuableScopeManager implements AgentScopeManager {
 
     @Override
     public AgentScope activate() {
+      spanUnderScope.finishThreadMigration();
       if (USED.compareAndSet(this, 0, 1)) {
         return scopeManager.handleSpan(this, spanUnderScope, source);
       } else {
@@ -514,6 +539,7 @@ public class ContinuableScopeManager implements AgentScopeManager {
     @Override
     public AgentScope activate() {
       if (tryActivate()) {
+        spanUnderScope.finishThreadMigration();
         return scopeManager.handleSpan(this, spanUnderScope, source);
       } else {
         return null;

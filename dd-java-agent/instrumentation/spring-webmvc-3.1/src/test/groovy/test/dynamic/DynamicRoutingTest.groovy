@@ -1,6 +1,7 @@
 package test.dynamic
 
 import datadog.trace.agent.test.asserts.TraceAssert
+import datadog.trace.agent.test.base.HttpServer
 import datadog.trace.agent.test.base.HttpServerTest
 import datadog.trace.api.DDSpanTypes
 import datadog.trace.api.DDTags
@@ -8,11 +9,13 @@ import datadog.trace.bootstrap.instrumentation.api.Tags
 import datadog.trace.instrumentation.servlet3.Servlet3Decorator
 import datadog.trace.instrumentation.springweb.SpringWebHttpServerDecorator
 import org.springframework.boot.SpringApplication
+import org.springframework.boot.context.embedded.EmbeddedWebApplicationContext
 import org.springframework.context.ConfigurableApplicationContext
 import org.springframework.web.servlet.view.RedirectView
 import test.boot.SecurityConfig
 
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.EXCEPTION
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.FORWARDED
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.REDIRECT
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.SUCCESS
 import static java.util.Collections.singletonMap
@@ -25,17 +28,38 @@ class DynamicRoutingTest extends HttpServerTest<ConfigurableApplicationContext> 
     return false
   }
 
-  @Override
-  ConfigurableApplicationContext startServer(int port) {
-    def app = new SpringApplication(DynamicRoutingAppConfig, SecurityConfig)
-    app.setDefaultProperties(singletonMap("server.port", port))
-    def context = app.run()
-    return context
+  class SpringBootServer implements HttpServer {
+    def port = 0
+    def context
+    final app = new SpringApplication(DynamicRoutingAppConfig, SecurityConfig)
+
+    @Override
+    void start() {
+      app.setDefaultProperties(singletonMap("server.port", 0))
+      context = app.run() as EmbeddedWebApplicationContext
+      port = context.embeddedServletContainer.port
+      assert port > 0
+    }
+
+    @Override
+    void stop() {
+      context.close()
+    }
+
+    @Override
+    URI address() {
+      return new URI("http://localhost:$port/")
+    }
+
+    @Override
+    String toString() {
+      return this.class.name
+    }
   }
 
   @Override
-  void stopServer(ConfigurableApplicationContext ctx) {
-    ctx.close()
+  HttpServer server() {
+    return new SpringBootServer()
   }
 
   @Override
@@ -154,11 +178,14 @@ class DynamicRoutingTest extends HttpServerTest<ConfigurableApplicationContext> 
       tags {
         "$Tags.COMPONENT" component
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
-        "$Tags.PEER_HOST_IPV4" { endpoint == ServerEndpoint.FORWARDED ? it == endpoint.body : (it == null || it == "127.0.0.1") }
+        "$Tags.PEER_HOST_IPV4" "127.0.0.1"
         "$Tags.PEER_PORT" Integer
         "$Tags.HTTP_URL" "${endpoint.resolve(address)}"
         "$Tags.HTTP_METHOD" method
         "$Tags.HTTP_STATUS" endpoint.status
+        if (endpoint == FORWARDED) {
+          "$Tags.HTTP_FORWARDED_IP" endpoint.body
+        }
         "servlet.path" endpoint.path
         if (endpoint.errored) {
           "error.msg" { it == null || it == EXCEPTION.body }

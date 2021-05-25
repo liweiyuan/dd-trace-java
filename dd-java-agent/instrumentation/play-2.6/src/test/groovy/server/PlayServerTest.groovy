@@ -1,6 +1,7 @@
 package server
 
 import datadog.trace.agent.test.asserts.TraceAssert
+import datadog.trace.agent.test.base.HttpServer
 import datadog.trace.agent.test.base.HttpServerTest
 import datadog.trace.api.DDSpanTypes
 import datadog.trace.api.DDTags
@@ -8,7 +9,6 @@ import datadog.trace.bootstrap.instrumentation.api.Tags
 import datadog.trace.instrumentation.akkahttp.AkkaHttpServerDecorator
 import datadog.trace.instrumentation.play26.PlayHttpServerDecorator
 import play.BuiltInComponents
-import play.Mode
 import play.mvc.Results
 import play.routing.RoutingDsl
 import play.server.Server
@@ -23,9 +23,10 @@ import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.REDIRE
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.SUCCESS
 
 class PlayServerTest extends HttpServerTest<Server> {
+
   @Override
-  Server startServer(int port) {
-    return Server.forRouter(Mode.TEST, port) { BuiltInComponents components ->
+  HttpServer server() {
+    return new PlayHttpServer({ BuiltInComponents components ->
       RoutingDsl.fromComponents(components)
         .GET(SUCCESS.getPath()).routeTo({
           controller(SUCCESS) {
@@ -58,7 +59,7 @@ class PlayServerTest extends HttpServerTest<Server> {
           }
         } as Supplier)
         .build()
-    }
+    })
   }
 
   @Override
@@ -97,10 +98,12 @@ class PlayServerTest extends HttpServerTest<Server> {
       tags {
         "$Tags.COMPONENT" PlayHttpServerDecorator.DECORATE.component()
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
-        "$Tags.PEER_HOST_IPV4" { endpoint == FORWARDED ? it == endpoint.body : (it == null || it == "127.0.0.1") }
+        "$Tags.PEER_HOST_IPV4" { it == (endpoint == FORWARDED ? endpoint.body : "127.0.0.1") }
         "$Tags.HTTP_URL" String
         "$Tags.HTTP_METHOD" String
         "$Tags.HTTP_STATUS" Integer
+        // BUG
+        //        "$Tags.HTTP_ROUTE" String
         if (endpoint == EXCEPTION) {
           errorTags(Exception, EXCEPTION.body)
         }
@@ -128,10 +131,13 @@ class PlayServerTest extends HttpServerTest<Server> {
       tags {
         "$Tags.COMPONENT" component
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
-        "$Tags.PEER_HOST_IPV4" { endpoint == FORWARDED ? it == endpoint.body : (it == null || it == "127.0.0.1") }
+        "$Tags.PEER_HOST_IPV4" { it == (endpoint == FORWARDED ? endpoint.body : "127.0.0.1") }
         "$Tags.HTTP_STATUS" endpoint.status
         "$Tags.HTTP_URL" "${endpoint.resolve(address)}"
         "$Tags.HTTP_METHOD" method
+        if (endpoint == FORWARDED) {
+          "$Tags.HTTP_FORWARDED_IP" endpoint.body
+        }
         if (endpoint.errored) {
           "error.msg" { it == null || it == EXCEPTION.body }
           "error.type" { it == null || it == Exception.name }

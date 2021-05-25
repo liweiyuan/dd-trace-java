@@ -10,24 +10,22 @@ import static datadog.trace.bootstrap.instrumentation.java.concurrent.AdviceUtil
 import static datadog.trace.bootstrap.instrumentation.java.concurrent.ExcludeFilter.ExcludeType.RUNNABLE;
 import static datadog.trace.bootstrap.instrumentation.java.concurrent.ExcludeFilter.ExcludeType.RUNNABLE_FUTURE;
 import static java.util.Collections.singletonMap;
-import static java.util.Collections.unmodifiableMap;
 import static net.bytebuddy.matcher.ElementMatchers.isConstructor;
 import static net.bytebuddy.matcher.ElementMatchers.isMethod;
 
 import com.google.auto.service.AutoService;
 import datadog.trace.agent.tooling.ExcludeFilterProvider;
 import datadog.trace.agent.tooling.Instrumenter;
+import datadog.trace.agent.tooling.bytebuddy.matcher.NameMatchers;
 import datadog.trace.bootstrap.InstrumentationContext;
 import datadog.trace.bootstrap.instrumentation.java.concurrent.ExcludeFilter;
 import datadog.trace.bootstrap.instrumentation.java.concurrent.State;
 import datadog.trace.context.TraceScope;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.RunnableFuture;
 import net.bytebuddy.asm.Advice;
-import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.matcher.ElementMatcher;
 
@@ -40,17 +38,14 @@ public final class RunnableFutureInstrumentation extends Instrumenter.Tracing
 
   @Override
   public ElementMatcher<? super TypeDescription> typeMatcher() {
-    return extendsClass(
-            named("java.util.concurrent.FutureTask")
-                .or(nameEndsWith(".netty.util.concurrent.PromiseTask"))
-                .or(nameEndsWith("com.google.common.util.concurrent.TrustedListenableFutureTask")))
+    return NameMatchers.<TypeDescription>notExcludedByName(RUNNABLE_FUTURE)
         .and(
-            new ElementMatcher.Junction.AbstractBase<TypeDescription>() {
-              @Override
-              public boolean matches(TypeDescription target) {
-                return !ExcludeFilter.exclude(RUNNABLE_FUTURE, target.getName());
-              }
-            });
+            extendsClass(
+                named("java.util.concurrent.FutureTask")
+                    .or(nameEndsWith(".netty.util.concurrent.PromiseTask"))
+                    .or(
+                        nameEndsWith(
+                            "com.google.common.util.concurrent.TrustedListenableFutureTask"))));
   }
 
   @Override
@@ -59,14 +54,12 @@ public final class RunnableFutureInstrumentation extends Instrumenter.Tracing
   }
 
   @Override
-  public Map<? extends ElementMatcher<? super MethodDescription>, String> transformers() {
-    Map<ElementMatcher<MethodDescription>, String> transformers = new HashMap<>(8);
+  public void adviceTransformations(AdviceTransformation transformation) {
     // TODO should target some particular implementations to prevent this from happening all
     //  the way up the constructor chain (even though the advice applied is cheap)
-    transformers.put(isConstructor(), getClass().getName() + "$Construct");
-    transformers.put(isMethod().and(named("run")), getClass().getName() + "$Run");
-    transformers.put(isMethod().and(named("cancel")), getClass().getName() + "$Cancel");
-    return unmodifiableMap(transformers);
+    transformation.applyAdvice(isConstructor(), getClass().getName() + "$Construct");
+    transformation.applyAdvice(isMethod().and(named("run")), getClass().getName() + "$Run");
+    transformation.applyAdvice(isMethod().and(named("cancel")), getClass().getName() + "$Cancel");
   }
 
   @Override

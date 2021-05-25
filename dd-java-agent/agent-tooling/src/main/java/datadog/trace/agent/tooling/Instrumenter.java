@@ -1,5 +1,6 @@
 package datadog.trace.agent.tooling;
 
+import static datadog.trace.agent.tooling.bytebuddy.DDTransformers.defaultTransformers;
 import static datadog.trace.agent.tooling.bytebuddy.matcher.DDElementMatchers.failSafe;
 import static datadog.trace.agent.tooling.bytebuddy.matcher.NameMatchers.named;
 import static java.util.Collections.emptyMap;
@@ -8,8 +9,8 @@ import static net.bytebuddy.matcher.ElementMatchers.any;
 import static net.bytebuddy.matcher.ElementMatchers.isAnnotatedWith;
 import static net.bytebuddy.matcher.ElementMatchers.not;
 
-import datadog.trace.agent.tooling.bytebuddy.DDTransformers;
 import datadog.trace.agent.tooling.bytebuddy.ExceptionHandlers;
+import datadog.trace.agent.tooling.bytebuddy.matcher.FailSafe;
 import datadog.trace.agent.tooling.context.FieldBackedContextProvider;
 import datadog.trace.agent.tooling.context.InstrumentationContextProvider;
 import datadog.trace.agent.tooling.context.NoopContextProvider;
@@ -146,23 +147,37 @@ public interface Instrumenter {
       lazyInit();
 
       AgentBuilder.Identified.Extendable agentBuilder =
-          parentAgentBuilder
-              .type(
-                  failSafe(
-                      typeMatcher(),
-                      "Instrumentation type matcher unexpected exception: " + getClass().getName()),
-                  failSafe(
-                      classLoaderMatcher(),
-                      "Instrumentation class loader matcher unexpected exception: "
-                          + getClass().getName()))
-              .and(NOT_DECORATOR_MATCHER)
-              .and(new MuzzleMatcher())
-              .transform(DDTransformers.defaultTransformers());
+          filter(parentAgentBuilder).transform(defaultTransformers());
       agentBuilder = injectHelperClasses(agentBuilder);
       agentBuilder = contextProvider.instrumentationTransformer(agentBuilder);
-      agentBuilder = applyInstrumentationTransformers(agentBuilder);
+      AgentBuilder.Transformer transformer = transformer();
+      if (transformer != null) {
+        agentBuilder = agentBuilder.transform(transformer);
+      }
+      AdviceBuilder adviceBuilder = new AdviceBuilder(agentBuilder);
+      adviceTransformations(adviceBuilder);
+      agentBuilder = adviceBuilder.agentBuilder;
       agentBuilder = contextProvider.additionalInstrumentation(agentBuilder);
       return agentBuilder;
+    }
+
+    private AgentBuilder.Identified.Narrowable filter(AgentBuilder agentBuilder) {
+      final AgentBuilder.Identified.Narrowable narrowable;
+      ElementMatcher<? super TypeDescription> typeMatcher = typeMatcher();
+      if (typeMatcher instanceof AgentBuilder.RawMatcher && typeMatcher instanceof FailSafe) {
+        narrowable = agentBuilder.type((AgentBuilder.RawMatcher) typeMatcher);
+      } else {
+        narrowable =
+            agentBuilder.type(
+                failSafe(
+                    typeMatcher,
+                    "Instrumentation type matcher unexpected exception: " + getClass().getName()),
+                failSafe(
+                    classLoaderMatcher(),
+                    "Instrumentation class loader matcher unexpected exception: "
+                        + getClass().getName()));
+      }
+      return narrowable.and(NOT_DECORATOR_MATCHER).and(new MuzzleMatcher());
     }
 
     private AgentBuilder.Identified.Extendable injectHelperClasses(
@@ -176,17 +191,22 @@ public interface Instrumenter {
       return agentBuilder;
     }
 
-    private AgentBuilder.Identified.Extendable applyInstrumentationTransformers(
-        AgentBuilder.Identified.Extendable agentBuilder) {
-      for (final Map.Entry<? extends ElementMatcher, String> entry : transformers().entrySet()) {
+    private static class AdviceBuilder implements AdviceTransformation {
+      AgentBuilder.Identified.Extendable agentBuilder;
+
+      public AdviceBuilder(AgentBuilder.Identified.Extendable agentBuilder) {
+        this.agentBuilder = agentBuilder;
+      }
+
+      @Override
+      public void applyAdvice(ElementMatcher<? super MethodDescription> matcher, String name) {
         agentBuilder =
             agentBuilder.transform(
                 new AgentBuilder.Transformer.ForAdvice()
                     .include(Utils.getBootstrapProxy(), Utils.getAgentClassLoader())
                     .withExceptionHandler(ExceptionHandlers.defaultExceptionHandler())
-                    .advice(entry.getKey(), entry.getValue()));
+                    .advice(matcher, name));
       }
-      return agentBuilder;
     }
 
     /** Matches classes for which instrumentation is not muzzled. */
@@ -265,8 +285,16 @@ public interface Instrumenter {
     /** @return A type matcher used to match the class under transform. */
     public abstract ElementMatcher<? super TypeDescription> typeMatcher();
 
-    /** @return A map of matcher->advice */
-    public abstract Map<? extends ElementMatcher<? super MethodDescription>, String> transformers();
+    /** @return A transformer for further transformation of the class */
+    public AgentBuilder.Transformer transformer() {
+      return null;
+    }
+
+    /**
+     * Instrumenters should register each advice transformation by calling {@link
+     * AdviceTransformation#applyAdvice(ElementMatcher, String)} one or more times.
+     */
+    public abstract void adviceTransformations(AdviceTransformation transformation);
 
     /**
      * Context stores to define for this instrumentation. Are added to matching class loaders.
@@ -304,13 +332,41 @@ public interface Instrumenter {
 
   /** Parent class for all tracing related instrumentations */
   abstract class Tracing extends Default {
+
+    private final boolean shortCutEnabled;
+
     public Tracing(String instrumentationName, String... additionalNames) {
+      this(false, instrumentationName, additionalNames);
+    }
+
+    public Tracing(
+        boolean defaultToShortCutMatching, String instrumentationName, String... additionalNames) {
       super(instrumentationName, additionalNames);
+      this.shortCutEnabled =
+          Config.get()
+              .isIntegrationShortCutMatchingEnabled(
+                  Collections.singletonList(instrumentationName), defaultToShortCutMatching);
     }
 
     @Override
     public boolean isApplicable(Set<TargetSystem> enabledSystems) {
       return enabledSystems.contains(TargetSystem.TRACING);
+    }
+
+    @Override
+    public ElementMatcher<? super TypeDescription> typeMatcher() {
+      if (shortCutEnabled) {
+        return shortCutMatcher();
+      }
+      return hierarchyMatcher();
+    }
+
+    public ElementMatcher<? super TypeDescription> shortCutMatcher() {
+      throw new IllegalStateException("shortCutMatcher not implemented");
+    }
+
+    public ElementMatcher<? super TypeDescription> hierarchyMatcher() {
+      throw new IllegalStateException("hierarchyMatcher not implemented");
     }
   }
 
@@ -324,5 +380,9 @@ public interface Instrumenter {
     public boolean isApplicable(Set<TargetSystem> enabledSystems) {
       return enabledSystems.contains(TargetSystem.PROFILING);
     }
+  }
+
+  interface AdviceTransformation {
+    void applyAdvice(ElementMatcher<? super MethodDescription> matcher, String name);
   }
 }

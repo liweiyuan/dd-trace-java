@@ -1,6 +1,7 @@
 package test.boot
 
 import datadog.trace.agent.test.asserts.TraceAssert
+import datadog.trace.agent.test.base.HttpServer
 import datadog.trace.agent.test.base.HttpServerTest
 import datadog.trace.api.DDSpanTypes
 import datadog.trace.api.DDTags
@@ -10,11 +11,13 @@ import datadog.trace.instrumentation.springweb.SpringWebHttpServerDecorator
 import okhttp3.FormBody
 import okhttp3.RequestBody
 import org.springframework.boot.SpringApplication
+import org.springframework.boot.context.embedded.EmbeddedWebApplicationContext
 import org.springframework.context.ConfigurableApplicationContext
 import org.springframework.web.servlet.view.RedirectView
 import spock.lang.Shared
 
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.EXCEPTION
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.FORWARDED
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.LOGIN
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.NOT_FOUND
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.NOT_HERE
@@ -24,26 +27,50 @@ import static java.util.Collections.singletonMap
 
 class SpringBootBasedTest extends HttpServerTest<ConfigurableApplicationContext> {
 
-  @Shared
-  def context
-
   @Override
   boolean useStrictTraceWrites() {
     // TODO fix this by making sure that spans get closed properly
     return false
   }
 
-  @Override
-  ConfigurableApplicationContext startServer(int port) {
-    def app = new SpringApplication(AppConfig, SecurityConfig, AuthServerConfig, TestController)
-    app.setDefaultProperties(singletonMap("server.port", port))
-    context = app.run()
-    return context
+  @Shared
+  EmbeddedWebApplicationContext context
+
+  SpringApplication application() {
+    return new SpringApplication(AppConfig, SecurityConfig, AuthServerConfig, TestController)
+  }
+
+  class SpringBootServer implements HttpServer {
+    def port = 0
+    final app = application()
+
+    @Override
+    void start() {
+      app.setDefaultProperties(singletonMap("server.port", 0))
+      context = app.run() as EmbeddedWebApplicationContext
+      port = context.embeddedServletContainer.port
+      assert port > 0
+    }
+
+    @Override
+    void stop() {
+      context.close()
+    }
+
+    @Override
+    URI address() {
+      return new URI("http://localhost:$port/")
+    }
+
+    @Override
+    String toString() {
+      return this.class.name
+    }
   }
 
   @Override
-  void stopServer(ConfigurableApplicationContext ctx) {
-    ctx.close()
+  HttpServer server() {
+    return new SpringBootServer()
   }
 
   @Override
@@ -226,11 +253,15 @@ class SpringBootBasedTest extends HttpServerTest<ConfigurableApplicationContext>
       tags {
         "$Tags.COMPONENT" component
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
-        "$Tags.PEER_HOST_IPV4" { endpoint == ServerEndpoint.FORWARDED ? it == endpoint.body : (it == null || it == "127.0.0.1") }
+        "$Tags.PEER_HOST_IPV4" "127.0.0.1"
         "$Tags.PEER_PORT" Integer
         "$Tags.HTTP_URL" "${endpoint.resolve(address)}"
         "$Tags.HTTP_METHOD" method
         "$Tags.HTTP_STATUS" endpoint.status
+        if (endpoint != LOGIN && endpoint != NOT_FOUND) { "$Tags.HTTP_ROUTE" String }
+        if (endpoint == FORWARDED) {
+          "$Tags.HTTP_FORWARDED_IP" endpoint.body
+        }
         "servlet.path" endpoint.path
         if (endpoint.errored) {
           "error.msg" { it == null || it == EXCEPTION.body }

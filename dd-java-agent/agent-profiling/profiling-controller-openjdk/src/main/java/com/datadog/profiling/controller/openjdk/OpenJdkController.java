@@ -15,15 +15,20 @@
  */
 package com.datadog.profiling.controller.openjdk;
 
+import static datadog.trace.api.Platform.isJavaVersionAtLeast;
+
 import com.datadog.profiling.controller.ConfigurationException;
 import com.datadog.profiling.controller.Controller;
 import com.datadog.profiling.controller.jfr.JfpUtils;
+import com.datadog.profiling.controller.openjdk.events.AvailableProcessorCoresEvent;
 import datadog.trace.api.Config;
 import de.thetaphi.forbiddenapis.SuppressForbidden;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Map;
 import jdk.jfr.Recording;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * This is the implementation of the controller for OpenJDK. It should work for JDK 11+ today, and
@@ -33,6 +38,8 @@ import jdk.jfr.Recording;
 public final class OpenJdkController implements Controller {
   static final int RECORDING_MAX_SIZE = 64 * 1024 * 1024; // 64 megs
   static final Duration RECORDING_MAX_AGE = Duration.ofMinutes(5);
+
+  private static final Logger log = LoggerFactory.getLogger(OpenJdkController.class);
 
   private final Map<String, String> recordingSettings;
 
@@ -55,6 +62,18 @@ public final class OpenJdkController implements Controller {
     } catch (final IOException e) {
       throw new ConfigurationException(e);
     }
+
+    // Toggle settings based on JDK version
+    if (Boolean.parseBoolean(recordingSettings.get("jdk.OldObjectSample#enabled"))) {
+      if (!isJavaVersionAtLeast(17)) {
+        log.debug(
+            "Inexpensive live object profiling is not supported for this JDK. Disabling OldObjectSample JFR event.");
+        recordingSettings.put("jdk.OldObjectSample#enabled", "false");
+      }
+    }
+
+    // Register periodic events
+    AvailableProcessorCoresEvent.register();
   }
 
   @Override

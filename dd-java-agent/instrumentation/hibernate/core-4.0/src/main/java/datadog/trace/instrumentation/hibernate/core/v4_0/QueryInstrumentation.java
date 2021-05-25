@@ -16,7 +16,6 @@ import datadog.trace.instrumentation.hibernate.SessionState;
 import java.lang.reflect.Method;
 import java.util.Map;
 import net.bytebuddy.asm.Advice;
-import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
 import net.bytebuddy.matcher.ElementMatcher;
@@ -33,13 +32,23 @@ public class QueryInstrumentation extends AbstractHibernateInstrumentation {
   }
 
   @Override
-  public ElementMatcher<TypeDescription> typeMatcher() {
+  public ElementMatcher<? super TypeDescription> hierarchyMatcher() {
     return implementsInterface(named("org.hibernate.Query"));
   }
 
   @Override
-  public Map<? extends ElementMatcher<? super MethodDescription>, String> transformers() {
-    return singletonMap(
+  public ElementMatcher<TypeDescription> shortCutMatcher() {
+    return namedOneOf(
+        "org.hibernate.query.internal.AbstractProducedQuery",
+        "org.hibernate.internal.AbstractQueryImpl",
+        "org.hibernate.internal.CollectionFilterImpl",
+        "org.hibernate.internal.QueryImpl",
+        "org.hibernate.internal.SQLQueryImpl");
+  }
+
+  @Override
+  public void adviceTransformations(AdviceTransformation transformation) {
+    transformation.applyAdvice(
         isMethod().and(namedOneOf("list", "executeUpdate", "uniqueResult", "scroll")),
         QueryInstrumentation.class.getName() + "$QueryMethodAdvice");
   }

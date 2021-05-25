@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.datadog.profiling.testing.ProfilingTestUtils;
 import com.google.common.collect.Multimap;
+import datadog.trace.api.Pair;
 import datadog.trace.api.config.ProfilingConfig;
 import java.io.ByteArrayInputStream;
 import java.io.File;
@@ -38,6 +39,7 @@ import org.openjdk.jmc.common.item.IAttribute;
 import org.openjdk.jmc.common.item.IItemCollection;
 import org.openjdk.jmc.common.item.ItemFilters;
 import org.openjdk.jmc.common.unit.IQuantity;
+import org.openjdk.jmc.common.unit.QuantityConversionException;
 import org.openjdk.jmc.common.unit.UnitLookup;
 import org.openjdk.jmc.flightrecorder.JfrLoaderToolkit;
 import org.slf4j.Logger;
@@ -158,29 +160,63 @@ class ProfilingIntegrationTest {
       assertFalse(logHasErrors(logFilePath, it -> false));
       IItemCollection events = JfrLoaderToolkit.loadEvents(new ByteArrayInputStream(byteData));
       assertTrue(events.hasItems());
+      Pair<Instant, Instant> rangeStartAndEnd = getRangeStartAndEnd(events);
+      Instant firstRangeStart = rangeStartAndEnd.getLeft();
+      Instant firstRangeEnd = rangeStartAndEnd.getRight();
+      assertTrue(
+          firstStartTime.compareTo(firstRangeStart) <= 0,
+          () ->
+              "First range start "
+                  + firstRangeStart
+                  + " is before first start time "
+                  + firstStartTime);
 
       RecordedRequest nextRequest = retrieveRequest();
       assertNotNull(nextRequest);
 
-      Multimap<String, Object> nextRequestParameters =
+      Multimap<String, Object> secondRequestParameters =
           ProfilingTestUtils.parseProfilingRequestParameters(nextRequest);
       Instant secondStartTime =
-          Instant.parse(getStringParameter("recording-start", nextRequestParameters));
+          Instant.parse(getStringParameter("recording-start", secondRequestParameters));
+      Instant secondEndTime =
+          Instant.parse(getStringParameter("recording-end", secondRequestParameters));
       long period = secondStartTime.toEpochMilli() - firstStartTime.toEpochMilli();
       long upperLimit = TimeUnit.SECONDS.toMillis(PROFILING_UPLOAD_PERIOD_SECONDS) * 2;
       assertTrue(
           period > 0 && period <= upperLimit,
           () -> "Upload period = " + period + "ms, expected (0, " + upperLimit + "]ms");
 
-      byteData = getParameter("chunk-data", byte[].class, firstRequestParameters);
+      byteData = getParameter("chunk-data", byte[].class, secondRequestParameters);
       assertNotNull(byteData);
       events = JfrLoaderToolkit.loadEvents(new ByteArrayInputStream(byteData));
       assertTrue(events.hasItems());
-
+      rangeStartAndEnd = getRangeStartAndEnd(events);
+      Instant secondRangeStart = rangeStartAndEnd.getLeft();
+      Instant secondRangeEnd = rangeStartAndEnd.getRight();
+      // So the OracleJdkOngoingRecording and underlying recording seems to
+      // either lose precision in the reported times, or filter a bit differently
+      // so we can't check these invariants =(
+      if (!System.getProperty("java.vendor").contains("Oracle")
+          || !System.getProperty("java.version").contains("1.8")) {
+        assertTrue(
+            secondStartTime.compareTo(secondRangeStart) <= 0,
+            () ->
+                "Second range start "
+                    + secondRangeStart
+                    + " is before second start time "
+                    + secondStartTime);
+        assertTrue(
+            firstEndTime.isBefore(secondRangeStart),
+            () ->
+                "Second range start "
+                    + secondRangeStart
+                    + " is before or equal to first end time "
+                    + firstEndTime);
+      }
       // Only non-Oracle JDK 8+ JVMs support custom DD events
       if (!System.getProperty("java.vendor").contains("Oracle")
           || !System.getProperty("java.version").contains("1.8")) {
-        // assertRecordingEvents(events);
+        assertRecordingEvents(events);
       }
     } finally {
       if (targetProcess != null) {
@@ -188,6 +224,43 @@ class ProfilingIntegrationTest {
       }
       targetProcess = null;
     }
+  }
+
+  private Instant convertFromQuantity(IQuantity instant) {
+    Instant converted = null;
+    try {
+      IQuantity rangeS = instant.in(UnitLookup.EPOCH_S);
+      long es = rangeS.longValue();
+      long ns = instant.longValueIn(UnitLookup.EPOCH_NS) - rangeS.longValueIn(UnitLookup.EPOCH_NS);
+      converted = Instant.ofEpochSecond(es, ns);
+    } catch (QuantityConversionException ignore) {
+    }
+    return converted;
+  }
+
+  private Pair<Instant, Instant> getRangeStartAndEnd(IItemCollection events) {
+    return events.getUnfilteredTimeRanges().stream()
+        .map(
+            range -> {
+              Instant convertedStart = convertFromQuantity(range.getStart());
+              Instant convertedEnd = convertFromQuantity(range.getEnd());
+              return Pair.of(convertedStart, convertedEnd);
+            })
+        .reduce(
+            Pair.of(null, null),
+            (send, newSend) -> {
+              Instant start = send.getLeft();
+              Instant end = send.getRight();
+              Instant newStart = newSend.getLeft();
+              Instant newEnd = newSend.getRight();
+              start =
+                  null == start
+                      ? newStart
+                      : null == newStart ? start : newStart.isBefore(start) ? newStart : start;
+              end =
+                  null == end ? newEnd : null == newEnd ? end : newEnd.isAfter(end) ? newEnd : end;
+              return Pair.of(start, end);
+            });
   }
 
   @Test
@@ -323,6 +396,19 @@ class ProfilingIntegrationTest {
     // check deadlock events
     assertTrue(events.apply(ItemFilters.type("datadog.Deadlock")).hasItems());
     assertTrue(events.apply(ItemFilters.type("datadog.DeadlockedThread")).hasItems());
+
+    // check available processor events
+    IItemCollection availableProcessorsEvents =
+        events.apply(ItemFilters.type("datadog.AvailableProcessorCores"));
+    assertTrue(availableProcessorsEvents.hasItems());
+    IAttribute<IQuantity> cpuCountAttr =
+        Attribute.attr("availableProcessorCores", "availableProcessorCores", UnitLookup.NUMBER);
+    long val =
+        ((IQuantity)
+                availableProcessorsEvents.getAggregate(
+                    Aggregators.min("datadog.AvailableProcessorCores", cpuCountAttr)))
+            .longValue();
+    assertEquals(Runtime.getRuntime().availableProcessors(), val);
   }
 
   private static String getStringParameter(String name, Multimap<String, Object> parameters) {
@@ -391,6 +477,7 @@ class ProfilingIntegrationTest {
             "-Ddd.profiling.start-delay=" + profilingStartDelaySecs,
             "-Ddd.profiling.upload.period=" + profilingUploadPeriodSecs,
             "-Ddd.profiling.url=http://localhost:" + profilerPort,
+            "-Ddd.profiling.hotspots.enabled=true",
             "-Ddatadog.slf4j.simpleLogger.defaultLogLevel=debug",
             "-Dorg.slf4j.simpleLogger.defaultLogLevel=debug",
             "-XX:+IgnoreUnrecognizedVMOptions",

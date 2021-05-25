@@ -22,6 +22,8 @@ class B3HttpCodec {
 
   private static final Logger log = LoggerFactory.getLogger(B3HttpCodec.class);
 
+  private static final String B3_TRACE_ID = "b3.traceid";
+  private static final String B3_SPAN_ID = "b3.spanid";
   private static final String TRACE_ID_KEY = "X-B3-TraceId";
   private static final String SPAN_ID_KEY = "X-B3-SpanId";
   private static final String SAMPLING_PRIORITY_KEY = "X-B3-Sampled";
@@ -38,9 +40,9 @@ class B3HttpCodec {
     public <C> void inject(
         final DDSpanContext context, final C carrier, final AgentPropagation.Setter<C> setter) {
       try {
-        String injectedTraceId = context.getTraceId().toHexString().toLowerCase();
+        String injectedTraceId = context.getTraceId().toHexStringOrOriginal();
         setter.set(carrier, TRACE_ID_KEY, injectedTraceId);
-        setter.set(carrier, SPAN_ID_KEY, context.getSpanId().toHexString().toLowerCase());
+        setter.set(carrier, SPAN_ID_KEY, context.getSpanId().toHexStringOrOriginal());
 
         if (context.lockSamplingPriority()) {
           setter.set(
@@ -116,22 +118,26 @@ class B3HttpCodec {
             switch (classification) {
               case TRACE_ID:
                 {
-                  final String trimmedValue;
                   final int length = firstValue.length();
                   if (length > 32) {
                     log.debug("Header {} exceeded max length of 32: {}", TRACE_ID_KEY, value);
                     traceId = DDId.ZERO;
                     return true;
-                  } else if (length > 16) {
-                    trimmedValue = value.substring(length - 16);
                   } else {
-                    trimmedValue = value;
+                    traceId = DDId.fromHexTruncatedWithOriginal(value);
                   }
-                  traceId = DDId.fromHex(trimmedValue);
+                  if (tags.isEmpty()) {
+                    tags = new TreeMap<>();
+                  }
+                  tags.put(B3_TRACE_ID, firstValue);
                   break;
                 }
               case SPAN_ID:
-                spanId = DDId.fromHex(firstValue);
+                spanId = DDId.fromHexWithOriginal(firstValue);
+                if (tags.isEmpty()) {
+                  tags = new TreeMap<>();
+                }
+                tags.put(B3_SPAN_ID, firstValue);
                 break;
               case SAMPLING_PRIORITY:
                 samplingPriority = convertSamplingPriority(firstValue);

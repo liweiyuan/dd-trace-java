@@ -2,6 +2,7 @@ package datadog.trace.instrumentation.hibernate.core.v4_0;
 
 import static datadog.trace.agent.tooling.bytebuddy.matcher.DDElementMatchers.implementsInterface;
 import static datadog.trace.agent.tooling.bytebuddy.matcher.NameMatchers.named;
+import static datadog.trace.agent.tooling.bytebuddy.matcher.NameMatchers.namedOneOf;
 import static java.util.Collections.singletonMap;
 import static net.bytebuddy.matcher.ElementMatchers.isMethod;
 import static net.bytebuddy.matcher.ElementMatchers.takesArguments;
@@ -15,7 +16,6 @@ import datadog.trace.instrumentation.hibernate.SessionState;
 import java.lang.reflect.Method;
 import java.util.Map;
 import net.bytebuddy.asm.Advice;
-import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.matcher.ElementMatcher;
 import org.hibernate.SharedSessionContract;
@@ -30,13 +30,22 @@ public class TransactionInstrumentation extends AbstractHibernateInstrumentation
   }
 
   @Override
-  public ElementMatcher<TypeDescription> typeMatcher() {
+  public ElementMatcher<TypeDescription> shortCutMatcher() {
+    return namedOneOf(
+        "org.hibernate.engine.transaction.spi.AbstractTransactionImpl",
+        "org.hibernate.engine.transaction.internal.jta.CMTTransaction",
+        "org.hibernate.engine.transaction.internal.jdbc.JdbcTransaction",
+        "org.hibernate.engine.transaction.internal.jta.JtaTransaction");
+  }
+
+  @Override
+  public ElementMatcher<? super TypeDescription> hierarchyMatcher() {
     return implementsInterface(named("org.hibernate.Transaction"));
   }
 
   @Override
-  public Map<? extends ElementMatcher<? super MethodDescription>, String> transformers() {
-    return singletonMap(
+  public void adviceTransformations(AdviceTransformation transformation) {
+    transformation.applyAdvice(
         isMethod().and(named("commit")).and(takesArguments(0)),
         TransactionInstrumentation.class.getName() + "$TransactionCommitAdvice");
   }

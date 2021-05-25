@@ -1,6 +1,6 @@
 package datadog.trace.core.jfr.openjdk
 
-
+import datadog.trace.api.GlobalTracer
 import datadog.trace.api.config.ProfilingConfig
 import datadog.trace.bootstrap.instrumentation.api.AgentScope
 import datadog.trace.bootstrap.instrumentation.api.AgentSpan
@@ -13,6 +13,8 @@ import spock.lang.Requires
 
 import java.time.Duration
 
+import static datadog.trace.api.Checkpointer.CPU
+
 @Requires({
   jvm.java11Compatible
 })
@@ -23,7 +25,11 @@ class ScopeEventTest extends DDSpecification {
 
   def setup() {
     injectSysConfig(ProfilingConfig.PROFILING_ENABLED, "true")
+    injectSysConfig(ProfilingConfig.PROFILING_HOTSPOTS_ENABLED, "true")
+    injectSysConfig(ProfilingConfig.PROFILING_CHECKPOINTS_RECORD_CPU_TIME, "true")
     tracer = CoreTracer.builder().writer(new ListWriter()).build()
+    GlobalTracer.forceRegister(tracer)
+    tracer.addScopeListener(new ScopeEventFactory())
   }
 
   def cleanup() {
@@ -277,5 +283,38 @@ class ScopeEventTest extends DDSpecification {
 
     cleanup:
     noProfilingTracer.close()
+  }
+
+  def "checkpoint events written when checkpointer registered"() {
+    setup:
+    SystemAccess.enableJmx()
+    def recording = JfrHelper.startRecording()
+    tracer.registerCheckpointer(new JFRCheckpointer())
+
+    when: "span goes through lifecycle without activation"
+    AgentSpan span = tracer.startSpan("test")
+    span.startThreadMigration()
+    span.finishThreadMigration()
+    span.setResourceName("foo")
+    span.finish()
+    then: "checkpoints emitted"
+    def events = JfrHelper.stopRecording(recording)
+    events.size() == 5
+    events.each {
+      assert it.eventType.name in ["datadog.Checkpoint", "datadog.Route"]
+      assert it.getLong("traceId") == span.getTraceId().toLong()
+      if (it.eventType.name == "datadog.Checkpoint") {
+        assert it.getLong("spanId") == span.getSpanId().toLong()
+        int flags = it.getInt("flags")
+        long cpuTime = it.getLong("cpuTime")
+        if ((flags & CPU) != 0) {
+          assert cpuTime > 0
+        } else {
+          assert cpuTime == 0L
+        }
+      } else {
+        it.getString("route") == "foo"
+      }
+    }
   }
 }

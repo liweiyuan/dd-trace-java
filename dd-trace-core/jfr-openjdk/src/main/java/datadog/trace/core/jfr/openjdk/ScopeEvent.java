@@ -1,6 +1,5 @@
 package datadog.trace.core.jfr.openjdk;
 
-import datadog.trace.api.DDId;
 import datadog.trace.core.util.SystemAccess;
 import jdk.jfr.Category;
 import jdk.jfr.Description;
@@ -16,6 +15,7 @@ import jdk.jfr.Timespan;
 @Category("Datadog")
 @StackTrace(false)
 public final class ScopeEvent extends Event {
+
   @Label("Trace Id")
   private final long traceId;
 
@@ -28,46 +28,55 @@ public final class ScopeEvent extends Event {
   private long cpuTime = Long.MIN_VALUE;
 
   private transient long cpuTimeStart;
+  private transient long childCpuTime;
+  private transient long rawCpuTime;
 
-  ScopeEvent(DDId traceId, DDId spanId) {
-    this.traceId = traceId.toLong();
-    this.spanId = spanId.toLong();
-
+  ScopeEvent(long traceId, long spanId, ThreadCpuTimeProvider provider) {
+    this.traceId = traceId;
+    this.spanId = spanId;
     if (isEnabled()) {
-      resume();
+      cpuTimeStart = provider.getThreadCpuTime();
       begin();
     }
   }
 
-  public void pause() {
-    if (cpuTimeStart > 0) {
-      if (cpuTime == Long.MIN_VALUE) {
-        cpuTime = SystemAccess.getCurrentThreadCpuTime() - cpuTimeStart;
-      } else {
-        cpuTime += SystemAccess.getCurrentThreadCpuTime() - cpuTimeStart;
-      }
+  void addChildCpuTime(long rawCpuTime) {
+    this.childCpuTime += rawCpuTime;
+  }
 
-      cpuTimeStart = 0;
+  /**
+   * Cpu time between start and finish without subtracting time spent in child scopes.
+   *
+   * <p>Only valid after this event is finished and if scope events are enabled
+   */
+  long getRawCpuTime() {
+    return rawCpuTime;
+  }
+
+  public void start() {
+    if (isEnabled()) {
+      cpuTimeStart = SystemAccess.getCurrentThreadCpuTime();
+      begin();
     }
   }
 
-  public void resume() {
-    cpuTimeStart = SystemAccess.getCurrentThreadCpuTime();
-  }
-
   public void finish() {
-    pause();
+    if (cpuTimeStart > 0) {
+      rawCpuTime = SystemAccess.getCurrentThreadCpuTime() - cpuTimeStart;
+      cpuTime = rawCpuTime - childCpuTime;
+    }
+
     end();
     if (shouldCommit()) {
       commit();
     }
   }
 
-  public long getTraceId() {
+  long getTraceId() {
     return traceId;
   }
 
-  public long getSpanId() {
+  long getSpanId() {
     return spanId;
   }
 }

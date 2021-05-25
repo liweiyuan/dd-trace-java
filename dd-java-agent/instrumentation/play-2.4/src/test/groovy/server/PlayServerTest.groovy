@@ -1,6 +1,7 @@
 package server
 
 import datadog.trace.agent.test.asserts.TraceAssert
+import datadog.trace.agent.test.base.HttpServer
 import datadog.trace.agent.test.base.HttpServerTest
 import datadog.trace.api.DDSpanTypes
 import datadog.trace.api.DDTags
@@ -21,8 +22,9 @@ import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.REDIRE
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.SUCCESS
 
 class PlayServerTest extends HttpServerTest<Server> {
+
   @Override
-  Server startServer(int port) {
+  HttpServer server() {
     def router =
       new RoutingDsl()
       .GET(SUCCESS.getPath()).routeTo({
@@ -55,13 +57,7 @@ class PlayServerTest extends HttpServerTest<Server> {
           throw new Exception(EXCEPTION.getBody())
         }
       } as Supplier)
-
-    return Server.forRouter(router.build(), port)
-  }
-
-  @Override
-  void stopServer(Server server) {
-    server.stop()
+    return new PlayHttpServer(router.build())
   }
 
   @Override
@@ -95,10 +91,12 @@ class PlayServerTest extends HttpServerTest<Server> {
       tags {
         "$Tags.COMPONENT" PlayHttpServerDecorator.DECORATE.component()
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
-        "$Tags.PEER_HOST_IPV4" { endpoint == FORWARDED ? it == endpoint.body : (it == null || it == "127.0.0.1") }
+        "$Tags.PEER_HOST_IPV4" { it == (endpoint == FORWARDED ? endpoint.body : "127.0.0.1") }
         "$Tags.HTTP_URL" String
         "$Tags.HTTP_METHOD" String
         "$Tags.HTTP_STATUS" Integer
+        // BUG
+        //        "$Tags.HTTP_ROUTE" String
         if (endpoint == EXCEPTION) {
           errorTags(Exception, EXCEPTION.body)
         }

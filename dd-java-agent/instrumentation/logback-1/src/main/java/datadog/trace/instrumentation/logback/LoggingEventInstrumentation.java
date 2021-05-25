@@ -19,7 +19,6 @@ import datadog.trace.bootstrap.instrumentation.api.Tags;
 import java.util.HashMap;
 import java.util.Map;
 import net.bytebuddy.asm.Advice;
-import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
 import net.bytebuddy.matcher.ElementMatcher;
@@ -53,8 +52,8 @@ public class LoggingEventInstrumentation extends Instrumenter.Tracing {
   }
 
   @Override
-  public Map<? extends ElementMatcher<? super MethodDescription>, String> transformers() {
-    return singletonMap(
+  public void adviceTransformations(AdviceTransformation transformation) {
+    transformation.applyAdvice(
         isMethod().and(named("getMDCPropertyMap").or(named("getMdc"))).and(takesArguments(0)),
         LoggingEventInstrumentation.class.getName() + "$GetMdcAdvice");
   }
@@ -97,9 +96,18 @@ public class LoggingEventInstrumentation extends Instrumenter.Tracing {
       }
 
       if (mdcTagsInjectionEnabled) {
-        correlationValues.put(Tags.DD_SERVICE, Config.get().getServiceName());
-        correlationValues.put(Tags.DD_ENV, Config.get().getEnv());
-        correlationValues.put(Tags.DD_VERSION, Config.get().getVersion());
+        String serviceName = Config.get().getServiceName();
+        if (null != serviceName && !serviceName.isEmpty()) {
+          correlationValues.put(Tags.DD_SERVICE, serviceName);
+        }
+        String env = Config.get().getEnv();
+        if (null != env && !env.isEmpty()) {
+          correlationValues.put(Tags.DD_ENV, env);
+        }
+        String version = Config.get().getVersion();
+        if (null != version && !version.isEmpty()) {
+          correlationValues.put(Tags.DD_VERSION, version);
+        }
       }
 
       if (mdc == null) {

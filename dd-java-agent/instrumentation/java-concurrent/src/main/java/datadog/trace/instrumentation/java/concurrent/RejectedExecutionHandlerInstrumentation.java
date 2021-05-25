@@ -19,7 +19,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.RunnableFuture;
 import net.bytebuddy.asm.Advice;
-import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.matcher.ElementMatcher;
 
@@ -37,8 +36,10 @@ public class RejectedExecutionHandlerInstrumentation extends Instrumenter.Tracin
             "java.util.concurrent.ThreadPoolExecutor$DiscardPolicy",
             "java.util.concurrent.ThreadPoolExecutor$DiscardOldestPolicy",
             "java.util.concurrent.ThreadPoolExecutor$CallerRunsPolicy")
-        .or(hasInterface(named("java.util.concurrent.RejectedExecutionHandler")))
-        .or(hasInterface(nameEndsWith("netty.util.concurrent.RejectedExecutionHandler")));
+        .or(
+            hasInterface(
+                named("java.util.concurrent.RejectedExecutionHandler")
+                    .or(nameEndsWith("netty.util.concurrent.RejectedExecutionHandler"))));
   }
 
   @Override
@@ -51,8 +52,8 @@ public class RejectedExecutionHandlerInstrumentation extends Instrumenter.Tracin
   }
 
   @Override
-  public Map<? extends ElementMatcher<? super MethodDescription>, String> transformers() {
-    return Collections.singletonMap(
+  public void adviceTransformations(AdviceTransformation transformation) {
+    transformation.applyAdvice(
         isMethod()
             // JDK or netty
             .and(namedOneOf("rejectedExecution", "rejected"))

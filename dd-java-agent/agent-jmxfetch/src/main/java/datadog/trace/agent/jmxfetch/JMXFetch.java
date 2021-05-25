@@ -5,6 +5,7 @@ import static datadog.trace.util.AgentThreadFactory.newAgentThread;
 import static org.datadog.jmxfetch.AppConfig.ACTION_COLLECT;
 
 import datadog.trace.api.Config;
+import datadog.trace.api.StatsDClient;
 import datadog.trace.api.StatsDClientManager;
 import de.thetaphi.forbiddenapis.SuppressForbidden;
 import java.io.IOException;
@@ -19,7 +20,6 @@ import java.util.SortedSet;
 import java.util.TreeSet;
 import org.datadog.jmxfetch.App;
 import org.datadog.jmxfetch.AppConfig;
-import org.datadog.jmxfetch.reporter.Reporter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,8 +31,6 @@ public class JMXFetch {
       Collections.singletonList("jmxfetch-config.yaml");
 
   private static final int SLEEP_AFTER_JMXFETCH_EXITS = 5000;
-
-  private static final String UNIX_DOMAIN_SOCKET_PREFIX = "unix://";
 
   public static void run(final StatsDClientManager statsDClientManager) {
     run(statsDClientManager, Config.get());
@@ -57,35 +55,29 @@ public class JMXFetch {
     final List<String> metricsConfigs = config.getJmxFetchMetricsConfigs();
     final Integer checkPeriod = config.getJmxFetchCheckPeriod();
     final Integer refreshBeansPeriod = config.getJmxFetchRefreshBeansPeriod();
+    final Integer initialRefreshBeansPeriod = config.getJmxFetchInitialRefreshBeansPeriod();
     final Map<String, String> globalTags = config.getMergedJmxTags();
 
-    String host =
-        config.getJmxFetchStatsdHost() == null
-            ? config.getAgentHost()
-            : config.getJmxFetchStatsdHost();
-    int port = config.getJmxFetchStatsdPort();
-
-    if (host.startsWith(UNIX_DOMAIN_SOCKET_PREFIX)) {
-      host = host.substring(UNIX_DOMAIN_SOCKET_PREFIX.length());
-      // Port equal to zero tells the java dogstatsd client to use UDS
-      port = 0;
-    }
+    String host = config.getJmxFetchStatsdHost();
+    Integer port = config.getJmxFetchStatsdPort();
 
     if (log.isDebugEnabled()) {
       log.debug(
-          "JMXFetch config: {} {} {} {} {} {} {} {}",
+          "JMXFetch config: {} {} {} {} {} {} {} {} {}",
           jmxFetchConfigDir,
           jmxFetchConfigs,
           internalMetricsConfigs,
           metricsConfigs,
           checkPeriod,
+          initialRefreshBeansPeriod,
           refreshBeansPeriod,
           globalTags,
-          "statsd:" + host + ":" + port);
+          "statsd:"
+              + (null != host ? host : "<auto-detect>")
+              + (null != port && port > 0 ? ":" + port : ""));
     }
 
-    final Reporter reporter =
-        new AgentStatsdReporter(statsDClientManager.statsDClient(host, port, null, null));
+    final StatsDClient statsd = statsDClientManager.statsDClient(host, port, null, null);
 
     final AppConfig.AppConfigBuilder configBuilder =
         AppConfig.builder()
@@ -99,9 +91,10 @@ public class JMXFetch {
             .instanceConfigResources(DEFAULT_CONFIGS)
             .metricConfigResources(internalMetricsConfigs)
             .metricConfigFiles(metricsConfigs)
+            .initialRefreshBeansPeriod(initialRefreshBeansPeriod)
             .refreshBeansPeriod(refreshBeansPeriod)
             .globalTags(globalTags)
-            .reporter(reporter);
+            .reporter(new AgentStatsdReporter(statsd));
 
     if (checkPeriod != null) {
       configBuilder.checkPeriod(checkPeriod);

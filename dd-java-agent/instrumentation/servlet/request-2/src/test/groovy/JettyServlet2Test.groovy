@@ -1,4 +1,5 @@
 import datadog.trace.agent.test.asserts.TraceAssert
+import datadog.trace.agent.test.base.HttpServer
 import datadog.trace.agent.test.base.HttpServerTest
 import datadog.trace.api.DDSpanTypes
 import datadog.trace.api.DDTags
@@ -22,43 +23,60 @@ class JettyServlet2Test extends HttpServerTest<Server> {
 
   private static final CONTEXT = "ctx"
 
-  @Override
-  Server startServer(int port) {
-    def jettyServer = new Server(port)
-    jettyServer.connectors.each {
-      it.setHost('localhost')
-    }
-    ServletContextHandler servletContext = new ServletContextHandler(null, "/$CONTEXT")
-    servletContext.errorHandler = new ErrorHandler() {
-        protected void handleErrorPage(HttpServletRequest request, Writer writer, int code, String message) throws IOException {
-          Throwable th = (Throwable) request.getAttribute("javax.servlet.error.exception")
-          writer.write(th ? th.message : message)
+  class JettyServer implements HttpServer {
+    def port = 0
+    final server = new Server(0) // select random open port
+
+    JettyServer() {
+      server.connectors.each {
+        it.setHost('localhost')
+      }
+      ServletContextHandler servletContext = new ServletContextHandler(null, "/$CONTEXT")
+      servletContext.errorHandler = new ErrorHandler() {
+          protected void handleErrorPage(HttpServletRequest request, Writer writer, int code, String message) throws IOException {
+            Throwable th = (Throwable) request.getAttribute("javax.servlet.error.exception")
+            writer.write(th ? th.message : message)
+          }
         }
+
+      // FIXME: Add tests for security/authentication.
+      //    ConstraintSecurityHandler security = setupAuthentication(jettyServer)
+      //    servletContext.setSecurityHandler(security)
+
+      HttpServerTest.ServerEndpoint.values().findAll { it != NOT_FOUND && it != UNKNOWN }.each {
+        servletContext.addServlet(TestServlet2.Sync, it.path)
       }
 
-    // FIXME: Add tests for security/authentication.
-    //    ConstraintSecurityHandler security = setupAuthentication(jettyServer)
-    //    servletContext.setSecurityHandler(security)
-
-    ServerEndpoint.values().findAll { it != NOT_FOUND && it != UNKNOWN }.each {
-      servletContext.addServlet(TestServlet2.Sync, it.path)
+      server.setHandler(servletContext)
     }
 
-    jettyServer.setHandler(servletContext)
-    jettyServer.start()
+    @Override
+    void start() {
+      server.start()
+      port = server.connectors[0].localPort
+      assert port > 0
+    }
 
-    return jettyServer
+    @Override
+    void stop() {
+      server.stop()
+      server.destroy()
+    }
+
+    @Override
+    URI address() {
+      return new URI("http://localhost:$port/$CONTEXT/")
+    }
+
+    @Override
+    String toString() {
+      return this.class.name
+    }
   }
 
   @Override
-  void stopServer(Server server) {
-    server.stop()
-    server.destroy()
-  }
-
-  @Override
-  URI buildAddress(int port) {
-    return new URI("http://localhost:$port/$CONTEXT/")
+  HttpServer server() {
+    return new JettyServer()
   }
 
   @Override
@@ -132,11 +150,14 @@ class JettyServlet2Test extends HttpServerTest<Server> {
       tags {
         "$Tags.COMPONENT" component
         "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
-        "$Tags.PEER_HOST_IPV4"(endpoint == FORWARDED ? endpoint.body : "127.0.0.1")
+        "$Tags.PEER_HOST_IPV4" "127.0.0.1"
         "$Tags.PEER_PORT" Integer
         "$Tags.HTTP_URL" "${endpoint.resolve(address)}"
         "$Tags.HTTP_METHOD" method
         "$Tags.HTTP_STATUS" endpoint.status
+        if (endpoint == FORWARDED) {
+          "$Tags.HTTP_FORWARDED_IP" endpoint.body
+        }
         "servlet.context" "/$CONTEXT"
         "servlet.path" endpoint.path
         if (endpoint.errored) {

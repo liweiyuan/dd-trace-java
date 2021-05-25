@@ -14,7 +14,6 @@ import datadog.trace.instrumentation.hibernate.SessionState;
 import java.lang.reflect.Method;
 import java.util.Map;
 import net.bytebuddy.asm.Advice;
-import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.matcher.ElementMatcher;
 import org.hibernate.procedure.ProcedureCall;
@@ -23,7 +22,7 @@ import org.hibernate.procedure.ProcedureCall;
 public class ProcedureCallInstrumentation extends Instrumenter.Tracing {
 
   public ProcedureCallInstrumentation() {
-    super("hibernate", "hibernate-core");
+    super(true, "hibernate", "hibernate-core");
   }
 
   @Override
@@ -47,13 +46,18 @@ public class ProcedureCallInstrumentation extends Instrumenter.Tracing {
   }
 
   @Override
-  public ElementMatcher<TypeDescription> typeMatcher() {
+  public ElementMatcher<TypeDescription> shortCutMatcher() {
+    return named("org.hibernate.procedure.internal.ProcedureCallImpl");
+  }
+
+  @Override
+  public ElementMatcher<TypeDescription> hierarchyMatcher() {
     return implementsInterface(named("org.hibernate.procedure.ProcedureCall"));
   }
 
   @Override
-  public Map<? extends ElementMatcher<? super MethodDescription>, String> transformers() {
-    return singletonMap(
+  public void adviceTransformations(AdviceTransformation transformation) {
+    transformation.applyAdvice(
         isMethod().and(named("getOutputs")),
         ProcedureCallInstrumentation.class.getName() + "$ProcedureCallMethodAdvice");
   }

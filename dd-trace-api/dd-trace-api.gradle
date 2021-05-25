@@ -12,12 +12,11 @@ excludedClassesCoverage += [
   'datadog.trace.api.DDTraceApiInfo',
   'datadog.trace.api.GlobalTracer*',
   'datadog.trace.api.PropagationStyle',
+  'datadog.trace.api.SpanCorrelation*',
 ]
 
 description = 'dd-trace-api'
 dependencies {
-  compile deps.slf4j
-
-  testCompile deps.guava
-  testCompile project(':utils:test-utils')
+  testImplementation deps.guava
+  testImplementation project(':utils:test-utils')
 }

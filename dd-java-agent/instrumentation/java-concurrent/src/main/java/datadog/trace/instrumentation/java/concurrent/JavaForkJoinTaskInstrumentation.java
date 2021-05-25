@@ -3,7 +3,9 @@ package datadog.trace.instrumentation.java.concurrent;
 import static datadog.trace.agent.tooling.bytebuddy.matcher.DDElementMatchers.extendsClass;
 import static datadog.trace.agent.tooling.bytebuddy.matcher.NameMatchers.named;
 import static datadog.trace.agent.tooling.bytebuddy.matcher.NameMatchers.namedOneOf;
+import static datadog.trace.agent.tooling.bytebuddy.matcher.NameMatchers.notExcludedByName;
 import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.activeScope;
+import static datadog.trace.bootstrap.instrumentation.java.concurrent.ExcludeFilter.ExcludeType.FORK_JOIN_TASK;
 import static datadog.trace.bootstrap.instrumentation.java.concurrent.ExcludeFilter.ExcludeType.RUNNABLE_FUTURE;
 import static java.util.Collections.singletonMap;
 import static net.bytebuddy.matcher.ElementMatchers.declaresMethod;
@@ -14,18 +16,14 @@ import datadog.trace.agent.tooling.ExcludeFilterProvider;
 import datadog.trace.agent.tooling.Instrumenter;
 import datadog.trace.bootstrap.InstrumentationContext;
 import datadog.trace.bootstrap.instrumentation.java.concurrent.AdviceUtils;
-import datadog.trace.bootstrap.instrumentation.java.concurrent.ExcludeFilter;
 import datadog.trace.bootstrap.instrumentation.java.concurrent.ExcludeFilter.ExcludeType;
 import datadog.trace.bootstrap.instrumentation.java.concurrent.State;
 import datadog.trace.context.TraceScope;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ForkJoinTask;
 import net.bytebuddy.asm.Advice;
-import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.matcher.ElementMatcher;
 
@@ -45,16 +43,9 @@ public final class JavaForkJoinTaskInstrumentation extends Instrumenter.Tracing
 
   @Override
   public ElementMatcher<TypeDescription> typeMatcher() {
-    return extendsClass(
-            named("java.util.concurrent.ForkJoinTask")
-                .and(
-                    new ElementMatcher.Junction.AbstractBase<TypeDescription>() {
-                      @Override
-                      public boolean matches(TypeDescription target) {
-                        return !ExcludeFilter.exclude(ExcludeType.FORK_JOIN_TASK, target.getName());
-                      }
-                    }))
-        .and(declaresMethod(namedOneOf("doExec", "exec", "fork", "cancel")));
+    return notExcludedByName(FORK_JOIN_TASK)
+        .and(declaresMethod(namedOneOf("doExec", "exec", "fork", "cancel")))
+        .and(extendsClass(named("java.util.concurrent.ForkJoinTask")));
   }
 
   @Override
@@ -63,12 +54,11 @@ public final class JavaForkJoinTaskInstrumentation extends Instrumenter.Tracing
   }
 
   @Override
-  public Map<? extends ElementMatcher<? super MethodDescription>, String> transformers() {
-    Map<ElementMatcher<MethodDescription>, String> transformers = new HashMap<>(4);
-    transformers.put(isMethod().and(namedOneOf("doExec", "exec")), getClass().getName() + "$Exec");
-    transformers.put(isMethod().and(named("fork")), getClass().getName() + "$Fork");
-    transformers.put(isMethod().and(named("cancel")), getClass().getName() + "$Cancel");
-    return Collections.unmodifiableMap(transformers);
+  public void adviceTransformations(AdviceTransformation transformation) {
+    transformation.applyAdvice(
+        isMethod().and(namedOneOf("doExec", "exec")), getClass().getName() + "$Exec");
+    transformation.applyAdvice(isMethod().and(named("fork")), getClass().getName() + "$Fork");
+    transformation.applyAdvice(isMethod().and(named("cancel")), getClass().getName() + "$Cancel");
   }
 
   @Override
