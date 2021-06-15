@@ -3,8 +3,8 @@ package datadog.trace.instrumentation.java.concurrent;
 import static datadog.trace.agent.tooling.bytebuddy.matcher.DDElementMatchers.extendsClass;
 import static datadog.trace.agent.tooling.bytebuddy.matcher.NameMatchers.nameEndsWith;
 import static datadog.trace.agent.tooling.bytebuddy.matcher.NameMatchers.named;
-import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.activeScope;
 import static datadog.trace.bootstrap.instrumentation.java.concurrent.AdviceUtils.cancelTask;
+import static datadog.trace.bootstrap.instrumentation.java.concurrent.AdviceUtils.capture;
 import static datadog.trace.bootstrap.instrumentation.java.concurrent.AdviceUtils.endTaskScope;
 import static datadog.trace.bootstrap.instrumentation.java.concurrent.AdviceUtils.startTaskScope;
 import static datadog.trace.bootstrap.instrumentation.java.concurrent.ExcludeFilter.ExcludeType.RUNNABLE;
@@ -71,52 +71,48 @@ public final class RunnableFutureInstrumentation extends Instrumenter.Tracing
     return singletonMap(
         RUNNABLE,
         Arrays.asList(
+            "com.couchbase.client.deps.io.netty.util.concurrent.PromiseTask",
+            "com.couchbase.client.deps.io.netty.util.concurrent.RunnableScheduledFutureTask",
+            "com.couchbase.client.deps.io.netty.util.concurrent.ScheduledFutureTask",
+            "com.couchbase.client.deps.io.netty.util.concurrent.UnorderedThreadPoolEventExecutor$NonNotifyRunnable",
+            "com.couchbase.client.deps.io.netty.util.concurrent.UnorderedThreadPoolEventExecutor$RunnableScheduledFutureTask",
+            "com.google.common.util.concurrent.Futures$CombinerFuture",
+            "com.google.common.util.concurrent.ListenableFutureTask",
+            "com.google.common.util.concurrent.TrustedListenableFutureTask",
+            "com.sun.jersey.client.impl.async.FutureClientResponseListener",
+            "io.grpc.netty.shaded.io.netty.util.concurrent.PromiseTask",
+            "io.grpc.netty.shaded.io.netty.util.concurrent.RunnableScheduledFutureTask",
+            "io.grpc.netty.shaded.io.netty.util.concurrent.ScheduledFutureTask",
+            "io.grpc.netty.shaded.io.netty.util.concurrent.UnorderedThreadPoolEventExecutor$NonNotifyRunnable",
+            "io.grpc.netty.shaded.io.netty.util.concurrent.UnorderedThreadPoolEventExecutor$RunnableScheduledFutureTask",
+            "io.netty.util.concurrent.PromiseTask",
+            "io.netty.util.concurrent.RunnableScheduledFutureTask",
+            "io.netty.util.concurrent.ScheduledFutureTask",
+            "io.netty.util.concurrent.UnorderedThreadPoolEventExecutor$NonNotifyRunnable",
+            "io.netty.util.concurrent.UnorderedThreadPoolEventExecutor$RunnableScheduledFutureTask",
+            "java.util.concurrent.ExecutorCompletionService$QueueingFuture",
             "java.util.concurrent.FutureTask",
             "java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask",
-            "java.util.concurrent.ExecutorCompletionService$QueueingFuture",
-            "io.netty.util.concurrent.PromiseTask",
-            "io.netty.util.concurrent.ScheduledFutureTask",
-            "io.netty.util.concurrent.RunnableScheduledFutureTask",
-            "io.netty.util.concurrent.UnorderedThreadPoolEventExecutor$RunnableScheduledFutureTask",
-            "io.netty.util.concurrent.UnorderedThreadPoolEventExecutor$NonNotifyRunnable",
-            "io.grpc.netty.shaded.io.netty.util.concurrent.PromiseTask",
-            "io.grpc.netty.shaded.io.netty.util.concurrent.ScheduledFutureTask",
-            "io.grpc.netty.shaded.io.netty.util.concurrent.RunnableScheduledFutureTask",
-            "io.grpc.netty.shaded.io.netty.util.concurrent.UnorderedThreadPoolEventExecutor$RunnableScheduledFutureTask",
-            "io.grpc.netty.shaded.io.netty.util.concurrent.UnorderedThreadPoolEventExecutor$NonNotifyRunnable",
-            "com.couchbase.client.deps.io.netty.util.concurrent.PromiseTask",
-            "com.couchbase.client.deps.io.netty.util.concurrent.ScheduledFutureTask",
-            "com.couchbase.client.deps.io.netty.util.concurrent.RunnableScheduledFutureTask",
-            "com.couchbase.client.deps.io.netty.util.concurrent.UnorderedThreadPoolEventExecutor$RunnableScheduledFutureTask",
-            "com.couchbase.client.deps.io.netty.util.concurrent.UnorderedThreadPoolEventExecutor$NonNotifyRunnable",
-            "play.shaded.ahc.io.netty.util.concurrent.PromiseTask",
-            "play.shaded.ahc.io.netty.util.concurrent.ScheduledFutureTask",
-            "play.shaded.ahc.io.netty.util.concurrent.RunnableScheduledFutureTask",
-            "com.google.common.util.concurrent.TrustedListenableFutureTask",
-            "com.google.common.util.concurrent.ListenableFutureTask",
-            "com.google.common.util.concurrent.Futures$CombinerFuture",
-            "org.springframework.util.concurrent.ListenableFutureTask",
-            "org.springframework.util.concurrent.SettableListenableFuture$SettableTask",
             "jersey.repackaged.com.google.common.util.concurrent.ListenableFutureTask",
-            "com.sun.jersey.client.impl.async.FutureClientResponseListener",
+            "org.apache.cassandra.concurrent.DebuggableThreadPoolExecutor$LocalSessionWrapper",
             "org.apache.http.impl.client.HttpRequestFutureTask",
+            "org.elasticsearch.common.util.concurrent.PrioritizedEsThreadPoolExecutor$PrioritizedFutureTask",
             "org.glassfish.enterprise.concurrent.internal.ManagedFutureTask",
             "org.glassfish.enterprise.concurrent.internal.ManagedScheduledThreadPoolExecutor$ManagedScheduledFutureTask",
             "org.glassfish.enterprise.concurrent.internal.ManagedScheduledThreadPoolExecutor$ManagedTriggerSingleFutureTask",
-            "org.elasticsearch.common.util.concurrent.PrioritizedEsThreadPoolExecutor$PrioritizedFutureTask",
-            "org.apache.cassandra.concurrent.DebuggableThreadPoolExecutor$LocalSessionWrapper"));
+            "org.springframework.boot.SpringApplicationShutdownHook",
+            "org.springframework.util.concurrent.ListenableFutureTask",
+            "org.springframework.util.concurrent.SettableListenableFuture$SettableTask",
+            "play.shaded.ahc.io.netty.util.concurrent.PromiseTask",
+            "play.shaded.ahc.io.netty.util.concurrent.RunnableScheduledFutureTask",
+            "play.shaded.ahc.io.netty.util.concurrent.ScheduledFutureTask"));
   }
 
   public static final class Construct {
 
     @Advice.OnMethodExit
     public static <T> void captureScope(@Advice.This RunnableFuture<T> task) {
-      TraceScope activeScope = activeScope();
-      if (null != activeScope) {
-        InstrumentationContext.get(RunnableFuture.class, State.class)
-            .putIfAbsent(task, State.FACTORY)
-            .captureAndSetContinuation(activeScope);
-      }
+      capture(InstrumentationContext.get(RunnableFuture.class, State.class), task, true);
     }
   }
 

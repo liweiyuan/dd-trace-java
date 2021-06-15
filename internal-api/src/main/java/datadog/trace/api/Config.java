@@ -33,6 +33,7 @@ import static datadog.trace.api.ConfigDefaults.DEFAULT_PROFILING_START_FORCE_FIR
 import static datadog.trace.api.ConfigDefaults.DEFAULT_PROFILING_UPLOAD_COMPRESSION;
 import static datadog.trace.api.ConfigDefaults.DEFAULT_PROFILING_UPLOAD_PERIOD;
 import static datadog.trace.api.ConfigDefaults.DEFAULT_PROFILING_UPLOAD_TIMEOUT;
+import static datadog.trace.api.ConfigDefaults.DEFAULT_PROPAGATION_EXTRACT_LOG_HEADER_NAMES_ENABLED;
 import static datadog.trace.api.ConfigDefaults.DEFAULT_PROPAGATION_STYLE_EXTRACT;
 import static datadog.trace.api.ConfigDefaults.DEFAULT_PROPAGATION_STYLE_INJECT;
 import static datadog.trace.api.ConfigDefaults.DEFAULT_RUNTIME_CONTEXT_FIELD_INJECTION;
@@ -119,6 +120,7 @@ import static datadog.trace.api.config.ProfilingConfig.PROFILING_UPLOAD_TIMEOUT;
 import static datadog.trace.api.config.ProfilingConfig.PROFILING_URL;
 import static datadog.trace.api.config.TraceInstrumentationConfig.DB_CLIENT_HOST_SPLIT_BY_INSTANCE;
 import static datadog.trace.api.config.TraceInstrumentationConfig.GRPC_IGNORED_OUTBOUND_METHODS;
+import static datadog.trace.api.config.TraceInstrumentationConfig.GRPC_SERVER_TRIM_PACKAGE_RESOURCE;
 import static datadog.trace.api.config.TraceInstrumentationConfig.HTTP_CLIENT_HOST_SPLIT_BY_DOMAIN;
 import static datadog.trace.api.config.TraceInstrumentationConfig.HTTP_CLIENT_TAG_QUERY_STRING;
 import static datadog.trace.api.config.TraceInstrumentationConfig.HTTP_SERVER_ROUTE_BASED_NAMING;
@@ -134,6 +136,7 @@ import static datadog.trace.api.config.TraceInstrumentationConfig.KAFKA_CLIENT_P
 import static datadog.trace.api.config.TraceInstrumentationConfig.LOGS_INJECTION_ENABLED;
 import static datadog.trace.api.config.TraceInstrumentationConfig.LOGS_MDC_TAGS_INJECTION_ENABLED;
 import static datadog.trace.api.config.TraceInstrumentationConfig.OSGI_SEARCH_DEPTH;
+import static datadog.trace.api.config.TraceInstrumentationConfig.PLAY_REPORT_HTTP_STATUS;
 import static datadog.trace.api.config.TraceInstrumentationConfig.RESOLVER_USE_LOADCLASS;
 import static datadog.trace.api.config.TraceInstrumentationConfig.RUNTIME_CONTEXT_FIELD_INJECTION;
 import static datadog.trace.api.config.TraceInstrumentationConfig.SERIALVERSIONUID_FIELD_INJECTION;
@@ -158,6 +161,7 @@ import static datadog.trace.api.config.TracerConfig.ID_GENERATION_STRATEGY;
 import static datadog.trace.api.config.TracerConfig.PARTIAL_FLUSH_MIN_SPANS;
 import static datadog.trace.api.config.TracerConfig.PRIORITY_SAMPLING;
 import static datadog.trace.api.config.TracerConfig.PRIORITY_SAMPLING_FORCE;
+import static datadog.trace.api.config.TracerConfig.PROPAGATION_EXTRACT_LOG_HEADER_NAMES_ENABLED;
 import static datadog.trace.api.config.TracerConfig.PROPAGATION_STYLE_EXTRACT;
 import static datadog.trace.api.config.TracerConfig.PROPAGATION_STYLE_INJECT;
 import static datadog.trace.api.config.TracerConfig.PROXY_NO_PROXY;
@@ -287,6 +291,7 @@ public class Config {
   private final boolean traceStrictWritesEnabled;
   private final boolean runtimeContextFieldInjection;
   private final boolean serialVersionUIDFieldInjection;
+  private final boolean logExtractHeaderNames;
   private final Set<PropagationStyle> propagationStylesToExtract;
   private final Set<PropagationStyle> propagationStylesToInject;
 
@@ -361,6 +366,9 @@ public class Config {
 
   private final int osgiSearchDepth;
 
+  // TODO: remove at a future point.
+  private final boolean playReportHttpStatus;
+
   private final boolean servletPrincipalEnabled;
   private final boolean servletAsyncTimeoutError;
 
@@ -381,6 +389,7 @@ public class Config {
   private final String jdbcConnectionClassName;
 
   private final Set<String> grpcIgnoredOutboundMethods;
+  private final boolean grpcServerTrimPackageResource;
 
   private String env;
   private String version;
@@ -576,6 +585,11 @@ public class Config {
         configProvider.getBoolean(
             SERIALVERSIONUID_FIELD_INJECTION, DEFAULT_SERIALVERSIONUID_FIELD_INJECTION);
 
+    logExtractHeaderNames =
+        configProvider.getBoolean(
+            PROPAGATION_EXTRACT_LOG_HEADER_NAMES_ENABLED,
+            DEFAULT_PROPAGATION_EXTRACT_LOG_HEADER_NAMES_ENABLED);
+
     propagationStylesToExtract =
         getPropagationStyleSetSettingFromEnvironmentOrDefault(
             PROPAGATION_STYLE_EXTRACT, DEFAULT_PROPAGATION_STYLE_EXTRACT);
@@ -741,6 +755,8 @@ public class Config {
 
     grpcIgnoredOutboundMethods =
         tryMakeImmutableSet(configProvider.getList(GRPC_IGNORED_OUTBOUND_METHODS));
+    grpcServerTrimPackageResource =
+        configProvider.getBoolean(GRPC_SERVER_TRIM_PACKAGE_RESOURCE, false);
 
     hystrixTagsEnabled = configProvider.getBoolean(HYSTRIX_TAGS_ENABLED, false);
     hystrixMeasuredEnabled = configProvider.getBoolean(HYSTRIX_MEASURED_ENABLED, false);
@@ -748,6 +764,8 @@ public class Config {
     igniteCacheIncludeKeys = configProvider.getBoolean(IGNITE_CACHE_INCLUDE_KEYS, false);
 
     osgiSearchDepth = configProvider.getInteger(OSGI_SEARCH_DEPTH, 1);
+
+    playReportHttpStatus = configProvider.getBoolean(PLAY_REPORT_HTTP_STATUS, false);
 
     servletPrincipalEnabled = configProvider.getBoolean(SERVLET_PRINCIPAL_ENABLED, false);
 
@@ -919,6 +937,10 @@ public class Config {
 
   public boolean isSerialVersionUIDFieldInjection() {
     return serialVersionUIDFieldInjection;
+  }
+
+  public boolean isLogExtractHeaderNames() {
+    return logExtractHeaderNames;
   }
 
   public Set<PropagationStyle> getPropagationStylesToExtract() {
@@ -1145,6 +1167,10 @@ public class Config {
     return osgiSearchDepth;
   }
 
+  public boolean getPlayReportHttpStatus() {
+    return playReportHttpStatus;
+  }
+
   public boolean isServletPrincipalEnabled() {
     return servletPrincipalEnabled;
   }
@@ -1191,6 +1217,10 @@ public class Config {
 
   public Set<String> getGrpcIgnoredOutboundMethods() {
     return grpcIgnoredOutboundMethods;
+  }
+
+  public boolean isGrpcServerTrimPackageResource() {
+    return grpcServerTrimPackageResource;
   }
 
   /** @return A map of tags to be applied only to the local application root span. */
@@ -1390,8 +1420,9 @@ public class Config {
     return isEnabled(Arrays.asList(integrationNames), "", ".analytics.enabled", defaultEnabled);
   }
 
-  public <T extends Enum<T>> T getEnumValue(String name, Class<T> type, T defaultValue) {
-    return configProvider.getEnum(PREFIX + name, type, defaultValue);
+  public <T extends Enum<T>> T getEnumValue(
+      final String name, final Class<T> type, final T defaultValue) {
+    return configProvider.getEnum(name, type, defaultValue);
   }
 
   private static boolean isDebugMode() {
