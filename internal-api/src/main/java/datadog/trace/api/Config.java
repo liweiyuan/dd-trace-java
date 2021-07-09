@@ -134,6 +134,7 @@ import static datadog.trace.api.config.TraceInstrumentationConfig.INTEGRATIONS_E
 import static datadog.trace.api.config.TraceInstrumentationConfig.JDBC_CONNECTION_CLASS_NAME;
 import static datadog.trace.api.config.TraceInstrumentationConfig.JDBC_PREPARED_STATEMENT_CLASS_NAME;
 import static datadog.trace.api.config.TraceInstrumentationConfig.KAFKA_CLIENT_BASE64_DECODING_ENABLED;
+import static datadog.trace.api.config.TraceInstrumentationConfig.KAFKA_CLIENT_PROPAGATION_DISABLED_TOPICS;
 import static datadog.trace.api.config.TraceInstrumentationConfig.KAFKA_CLIENT_PROPAGATION_ENABLED;
 import static datadog.trace.api.config.TraceInstrumentationConfig.LOGS_INJECTION_ENABLED;
 import static datadog.trace.api.config.TraceInstrumentationConfig.LOGS_MDC_TAGS_INJECTION_ENABLED;
@@ -176,6 +177,7 @@ import static datadog.trace.api.config.TracerConfig.SPLIT_BY_TAGS;
 import static datadog.trace.api.config.TracerConfig.TRACE_AGENT_PORT;
 import static datadog.trace.api.config.TracerConfig.TRACE_AGENT_URL;
 import static datadog.trace.api.config.TracerConfig.TRACE_ANALYTICS_ENABLED;
+import static datadog.trace.api.config.TracerConfig.TRACE_HTTP_SERVER_PATH_RESOURCE_NAME_MAPPING;
 import static datadog.trace.api.config.TracerConfig.TRACE_RATE_LIMIT;
 import static datadog.trace.api.config.TracerConfig.TRACE_REPORT_HOSTNAME;
 import static datadog.trace.api.config.TracerConfig.TRACE_RESOLVER_ENABLED;
@@ -211,7 +213,6 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -284,6 +285,7 @@ public class Config {
   private final boolean httpServerRawQueryString;
   private final boolean httpServerRawResource;
   private final boolean httpServerRouteBasedNaming;
+  private final Map<String, String> httpServerPathResourceNameMapping;
   private final boolean httpClientTagQueryString;
   private final boolean httpClientSplitByDomain;
   private final boolean dbClientSplitByInstance;
@@ -361,6 +363,7 @@ public class Config {
   private final boolean profilingHotspotsEnabled;
 
   private final boolean kafkaClientPropagationEnabled;
+  private final Set<String> kafkaClientPropagationDisabledTopics;
   private final boolean kafkaClientBase64DecodingEnabled;
 
   private final boolean hystrixTagsEnabled;
@@ -518,7 +521,7 @@ public class Config {
     agentTimeout = configProvider.getInteger(AGENT_TIMEOUT, DEFAULT_AGENT_TIMEOUT);
 
     // DD_PROXY_NO_PROXY is specified as a space-separated list of hosts
-    noProxyHosts = new HashSet<>(configProvider.getSpacedList(PROXY_NO_PROXY));
+    noProxyHosts = tryMakeImmutableSet(configProvider.getSpacedList(PROXY_NO_PROXY));
 
     prioritySamplingEnabled =
         configProvider.getBoolean(PRIORITY_SAMPLING, DEFAULT_PRIORITY_SAMPLING_ENABLED);
@@ -540,6 +543,9 @@ public class Config {
 
     excludedClasses = tryMakeImmutableList(configProvider.getList(TRACE_CLASSES_EXCLUDE));
     headerTags = configProvider.getMergedMap(HEADER_TAGS);
+
+    httpServerPathResourceNameMapping =
+        configProvider.getOrderedMap(TRACE_HTTP_SERVER_PATH_RESOURCE_NAME_MAPPING);
 
     httpServerErrorStatuses =
         configProvider.getIntegerRange(
@@ -758,6 +764,9 @@ public class Config {
         configProvider.getBoolean(
             KAFKA_CLIENT_PROPAGATION_ENABLED, DEFAULT_KAFKA_CLIENT_PROPAGATION_ENABLED);
 
+    kafkaClientPropagationDisabledTopics =
+        tryMakeImmutableSet(configProvider.getList(KAFKA_CLIENT_PROPAGATION_DISABLED_TOPICS));
+
     kafkaClientBase64DecodingEnabled =
         configProvider.getBoolean(KAFKA_CLIENT_BASE64_DECODING_ENABLED, false);
 
@@ -885,6 +894,10 @@ public class Config {
 
   public Map<String, String> getHeaderTags() {
     return headerTags;
+  }
+
+  public Map<String, String> getHttpServerPathResourceNameMapping() {
+    return httpServerPathResourceNameMapping;
   }
 
   public BitSet getHttpServerErrorStatuses() {
@@ -1161,6 +1174,10 @@ public class Config {
 
   public boolean isKafkaClientPropagationEnabled() {
     return kafkaClientPropagationEnabled;
+  }
+
+  public Set<String> getKafkaClientPropagationDisabledTopics() {
+    return kafkaClientPropagationDisabledTopics;
   }
 
   public boolean isKafkaClientBase64DecodingEnabled() {
@@ -1754,6 +1771,8 @@ public class Config {
         + httpServerRawResource
         + ", httpServerRouteBasedNaming="
         + httpServerRouteBasedNaming
+        + ", httpServerPathResourceNameMapping="
+        + httpServerPathResourceNameMapping
         + ", httpClientTagQueryString="
         + httpClientTagQueryString
         + ", httpClientSplitByDomain="
@@ -1888,6 +1907,8 @@ public class Config {
         + profilingExcludeAgentThreads
         + ", kafkaClientPropagationEnabled="
         + kafkaClientPropagationEnabled
+        + ", kafkaClientPropagationDisabledTopics="
+        + kafkaClientPropagationDisabledTopics
         + ", kafkaClientBase64DecodingEnabled="
         + kafkaClientBase64DecodingEnabled
         + ", hystrixTagsEnabled="
