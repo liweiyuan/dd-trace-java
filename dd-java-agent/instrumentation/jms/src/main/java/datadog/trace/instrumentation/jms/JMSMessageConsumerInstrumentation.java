@@ -20,7 +20,6 @@ import datadog.trace.agent.tooling.Instrumenter;
 import datadog.trace.bootstrap.InstrumentationContext;
 import datadog.trace.bootstrap.instrumentation.api.AgentScope;
 import datadog.trace.bootstrap.instrumentation.api.AgentSpan;
-import datadog.trace.bootstrap.instrumentation.api.AgentSpan.Context;
 import datadog.trace.bootstrap.instrumentation.jms.MessageConsumerState;
 import datadog.trace.bootstrap.instrumentation.jms.SessionState;
 import java.util.HashMap;
@@ -28,7 +27,6 @@ import java.util.Map;
 import javax.jms.Message;
 import javax.jms.MessageConsumer;
 import javax.jms.MessageListener;
-import javax.jms.Session;
 import net.bytebuddy.asm.Advice;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.matcher.ElementMatcher;
@@ -65,9 +63,8 @@ public final class JMSMessageConsumerInstrumentation extends Instrumenter.Tracin
   @Override
   public Map<String, String> contextStore() {
     Map<String, String> contextStore = new HashMap<>(4);
-    contextStore.put("javax.jms.Message", AgentSpan.class.getName());
     contextStore.put("javax.jms.MessageConsumer", MessageConsumerState.class.getName());
-    contextStore.put("javax.jms.Session", SessionState.class.getName());
+    contextStore.put("javax.jms.Message", SessionState.class.getName());
     return contextStore;
   }
 
@@ -91,19 +88,19 @@ public final class JMSMessageConsumerInstrumentation extends Instrumenter.Tracin
 
   public static class ConsumerAdvice {
 
-    @Advice.OnMethodEnter
+    @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void beforeReceive(@Advice.This final MessageConsumer consumer) {
-      MessageConsumerState messageConsumerState =
+      MessageConsumerState consumerState =
           InstrumentationContext.get(MessageConsumer.class, MessageConsumerState.class)
               .get(consumer);
-      if (null != messageConsumerState) {
+      if (null != consumerState) {
         // closes the scope, and finishes the span for AUTO_ACKNOWLEDGE
-        messageConsumerState.closePreviousMessageScope();
+        consumerState.closePreviousMessageScope();
       }
     }
 
     @Advice.OnMethodExit(onThrowable = Throwable.class, suppress = Throwable.class)
-    public static void onMessageProduced(
+    public static void afterReceive(
         @Advice.This final MessageConsumer consumer,
         @Advice.Return final Message message,
         @Advice.Thrown final Throwable throwable) {
@@ -111,28 +108,31 @@ public final class JMSMessageConsumerInstrumentation extends Instrumenter.Tracin
         // don't create spans (traces) for each poll if the queue is empty
         return;
       }
-      MessageConsumerState messageConsumerState =
+      MessageConsumerState consumerState =
           InstrumentationContext.get(MessageConsumer.class, MessageConsumerState.class)
               .get(consumer);
-      if (null != messageConsumerState) {
-        final Context extractedContext = propagate().extract(message, GETTER);
-        AgentSpan span = startSpan(JMS_CONSUME, extractedContext);
+      if (null != consumerState) {
+        AgentSpan.Context propagatedContext = null;
+        if (!consumerState.isPropagationDisabled()) {
+          propagatedContext = propagate().extract(message, GETTER);
+        }
+        AgentSpan span = startSpan(JMS_CONSUME, propagatedContext);
         // this scope is intentionally not closed here
         // it stays open until the next call to get a
         // message, or the consumer is closed
         AgentScope scope = activateSpan(span);
-        messageConsumerState.capture(scope);
+        consumerState.closeOnIteration(scope);
         CONSUMER_DECORATE.afterStart(span);
-        CONSUMER_DECORATE.onConsume(span, message, messageConsumerState.getResourceName());
+        CONSUMER_DECORATE.onConsume(span, message, consumerState.getResourceName());
         CONSUMER_DECORATE.onError(span, throwable);
-        if (messageConsumerState.isClientAcknowledge()) {
-          // span will be finished by a call to Message.acknowledge
-          InstrumentationContext.get(Message.class, AgentSpan.class).put(message, span);
-        } else if (messageConsumerState.isTransactedSession()) {
-          // span will be finished by Session.commit
-          InstrumentationContext.get(Session.class, SessionState.class)
-              .get((Session) messageConsumerState.getSession())
-              .add(span);
+        SessionState sessionState = consumerState.getSessionState();
+        if (sessionState.isClientAcknowledge()) {
+          // consumed spans will be finished by a call to Message.acknowledge
+          sessionState.finishOnAcknowledge(span);
+          InstrumentationContext.get(Message.class, SessionState.class).put(message, sessionState);
+        } else if (sessionState.isTransactedSession()) {
+          // span will be finished by Session.commit/rollback/close
+          sessionState.finishOnCommit(span);
         }
         // for AUTO_ACKNOWLEDGE, span is not finished until next call to receive, or close
       }
@@ -140,13 +140,13 @@ public final class JMSMessageConsumerInstrumentation extends Instrumenter.Tracin
   }
 
   public static class Close {
-    @Advice.OnMethodEnter
+    @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void beforeClose(@Advice.This final MessageConsumer consumer) {
-      MessageConsumerState messageConsumerState =
+      MessageConsumerState consumerState =
           InstrumentationContext.get(MessageConsumer.class, MessageConsumerState.class)
               .get(consumer);
-      if (null != messageConsumerState) {
-        messageConsumerState.closePreviousMessageScope();
+      if (null != consumerState) {
+        consumerState.closePreviousMessageScope();
       }
     }
   }
@@ -157,21 +157,15 @@ public final class JMSMessageConsumerInstrumentation extends Instrumenter.Tracin
         @Advice.This MessageConsumer messageConsumer,
         @Advice.Argument(value = 0, readOnly = false) MessageListener listener) {
       if (!(listener instanceof DatadogMessageListener)) {
-        MessageConsumerState messageConsumerState =
+        MessageConsumerState consumerState =
             InstrumentationContext.get(MessageConsumer.class, MessageConsumerState.class)
                 .get(messageConsumer);
-        if (null != messageConsumerState) {
-          SessionState sessionState =
-              InstrumentationContext.get(Session.class, SessionState.class)
-                  .get((Session) messageConsumerState.getSession());
-          if (null != sessionState) {
-            listener =
-                new DatadogMessageListener(
-                    InstrumentationContext.get(Message.class, AgentSpan.class),
-                    listener,
-                    messageConsumerState,
-                    sessionState);
-          }
+        if (null != consumerState) {
+          listener =
+              new DatadogMessageListener(
+                  InstrumentationContext.get(Message.class, SessionState.class),
+                  consumerState,
+                  listener);
         }
       }
     }

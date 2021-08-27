@@ -3,55 +3,39 @@ package datadog.trace.bootstrap.instrumentation.jms;
 import datadog.trace.bootstrap.instrumentation.api.AgentScope;
 import datadog.trace.bootstrap.instrumentation.api.UTF8BytesString;
 
+/** Tracks message scopes and spans when consuming messages with {@code receive}. */
 public final class MessageConsumerState {
 
-  private final Object session;
-  private final int ackMode;
+  private final SessionState sessionState;
   private final UTF8BytesString resourceName;
-  private final ThreadLocal<AgentScope> currentScope = new ThreadLocal<>();
+  private final boolean propagationDisabled;
 
-  public MessageConsumerState(Object session, int ackMode, UTF8BytesString resourceName) {
-    this.session = session;
-    this.ackMode = ackMode;
+  public MessageConsumerState(
+      SessionState sessionState, UTF8BytesString resourceName, boolean propagationDisabled) {
+    this.sessionState = sessionState;
     this.resourceName = resourceName;
+    this.propagationDisabled = propagationDisabled;
   }
 
-  @SuppressWarnings("unchecked")
-  public <T> T getSession() {
-    return (T) session;
-  }
-
-  public boolean isTransactedSession() {
-    return ackMode == 0; /* Session.SESSION_TRANSACTED */
-  }
-
-  public boolean isAutoAcknowledge() {
-    return ackMode == 1 || ackMode == 3; /*Session.AUTO_ACKNOWLEDGE Session.DUPS_OK_ACKNOWLEDGE */
-  }
-
-  public boolean isClientAcknowledge() {
-    /* Session.CLIENT_ACKNOWLEDGE */
-    return ackMode == 2;
+  public SessionState getSessionState() {
+    return sessionState;
   }
 
   public UTF8BytesString getResourceName() {
     return resourceName;
   }
 
-  public void capture(AgentScope scope) {
-    this.currentScope.set(scope);
+  public boolean isPropagationDisabled() {
+    return propagationDisabled;
   }
 
+  /** Closes the given message scope when the next message is consumed or the consumer is closed. */
+  public void closeOnIteration(AgentScope newScope) {
+    sessionState.closeOnIteration(newScope); // tracked per-session-thread
+  }
+
+  /** Closes the scope previously registered by closeOnIteration, assumes same calling thread. */
   public void closePreviousMessageScope() {
-    AgentScope scope = currentScope.get();
-    if (null != scope) {
-      // remove rather than wait for overwrite because it might
-      // be quite a long time before another message arrives
-      currentScope.remove();
-      scope.close();
-      if (isAutoAcknowledge()) {
-        scope.span().finish();
-      }
-    }
+    sessionState.closePreviousMessageScope(); // tracked per-session-thread
   }
 }

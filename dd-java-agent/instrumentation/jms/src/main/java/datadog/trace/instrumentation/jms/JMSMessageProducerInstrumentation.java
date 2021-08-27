@@ -14,13 +14,15 @@ import static net.bytebuddy.matcher.ElementMatchers.takesArgument;
 
 import com.google.auto.service.AutoService;
 import datadog.trace.agent.tooling.Instrumenter;
+import datadog.trace.api.Config;
 import datadog.trace.bootstrap.CallDepthThreadLocalMap;
 import datadog.trace.bootstrap.instrumentation.api.AgentScope;
 import datadog.trace.bootstrap.instrumentation.api.AgentSpan;
 import javax.jms.Destination;
-import javax.jms.JMSException;
 import javax.jms.Message;
 import javax.jms.MessageProducer;
+import javax.jms.Queue;
+import javax.jms.Topic;
 import net.bytebuddy.asm.Advice;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.matcher.ElementMatcher;
@@ -69,7 +71,7 @@ public final class JMSMessageProducerInstrumentation extends Instrumenter.Tracin
   public static class ProducerAdvice {
 
     @Advice.OnMethodEnter(suppress = Throwable.class)
-    public static AgentScope onEnter(
+    public static AgentScope beforeSend(
         @Advice.Argument(0) final Message message, @Advice.This final MessageProducer producer) {
       final int callDepth = CallDepthThreadLocalMap.incrementCallDepth(MessageProducer.class);
       if (callDepth > 0) {
@@ -77,9 +79,15 @@ public final class JMSMessageProducerInstrumentation extends Instrumenter.Tracin
       }
 
       Destination defaultDestination;
+      String destinationName = null;
       try {
         defaultDestination = producer.getDestination();
-      } catch (final JMSException e) {
+        if (defaultDestination instanceof Queue) {
+          destinationName = ((Queue) defaultDestination).getQueueName();
+        } else if (defaultDestination instanceof Topic) {
+          destinationName = ((Topic) defaultDestination).getTopicName();
+        }
+      } catch (Exception ignored) {
         defaultDestination = null;
       }
 
@@ -87,13 +95,15 @@ public final class JMSMessageProducerInstrumentation extends Instrumenter.Tracin
       PRODUCER_DECORATE.afterStart(span);
       PRODUCER_DECORATE.onProduce(span, message, defaultDestination);
 
-      propagate().inject(span, message, SETTER);
-
+      if (Config.get().isJMSPropagationEnabled()
+          && !Config.get().isJMSPropagationDisabledForDestination(destinationName)) {
+        propagate().inject(span, message, SETTER);
+      }
       return activateSpan(span);
     }
 
     @Advice.OnMethodExit(onThrowable = Throwable.class, suppress = Throwable.class)
-    public static void stopSpan(
+    public static void afterSend(
         @Advice.Enter final AgentScope scope, @Advice.Thrown final Throwable throwable) {
       if (scope == null) {
         return;
@@ -109,7 +119,7 @@ public final class JMSMessageProducerInstrumentation extends Instrumenter.Tracin
   public static class ProducerWithDestinationAdvice {
 
     @Advice.OnMethodEnter(suppress = Throwable.class)
-    public static AgentScope onEnter(
+    public static AgentScope beforeSend(
         @Advice.Argument(0) final Destination destination,
         @Advice.Argument(1) final Message message,
         @Advice.This final MessageProducer producer) {
@@ -118,17 +128,29 @@ public final class JMSMessageProducerInstrumentation extends Instrumenter.Tracin
         return null;
       }
 
+      String destinationName = null;
+      try {
+        if (destination instanceof Queue) {
+          destinationName = ((Queue) destination).getQueueName();
+        } else if (destination instanceof Topic) {
+          destinationName = ((Topic) destination).getTopicName();
+        }
+      } catch (Exception ignored) {
+      }
+
       final AgentSpan span = startSpan(JMS_PRODUCE);
       PRODUCER_DECORATE.afterStart(span);
       PRODUCER_DECORATE.onProduce(span, message, destination);
 
-      propagate().inject(span, message, SETTER);
-
+      if (Config.get().isJMSPropagationEnabled()
+          && !Config.get().isJMSPropagationDisabledForDestination(destinationName)) {
+        propagate().inject(span, message, SETTER);
+      }
       return activateSpan(span);
     }
 
     @Advice.OnMethodExit(onThrowable = Throwable.class, suppress = Throwable.class)
-    public static void stopSpan(
+    public static void afterSend(
         @Advice.Enter final AgentScope scope, @Advice.Thrown final Throwable throwable) {
       if (scope == null) {
         return;

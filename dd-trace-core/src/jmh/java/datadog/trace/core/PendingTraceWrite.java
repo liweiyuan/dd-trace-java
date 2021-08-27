@@ -52,7 +52,8 @@ public class PendingTraceWrite {
                 false,
                 "type",
                 0,
-                trace));
+                trace,
+                null));
     span =
         DDSpan.create(
             System.currentTimeMillis() * 1000,
@@ -70,7 +71,8 @@ public class PendingTraceWrite {
                 false,
                 "type",
                 0,
-                trace));
+                trace,
+                null));
   }
 
   @Threads(4)
@@ -81,8 +83,8 @@ public class PendingTraceWrite {
       trace.registerSpan(span);
     }
     for (int i = 0; i < depthPerThread; ++i) {
-      trace.addFinishedSpan(span);
+      trace.onPublish(span);
     }
-    trace.addFinishedSpan(root);
+    trace.onPublish(root);
   }
 }

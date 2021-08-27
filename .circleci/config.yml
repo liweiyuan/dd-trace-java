@@ -190,6 +190,7 @@ jobs:
             ./gradlew <<# parameters.prefixTestTask>>testJava<</ parameters.prefixTestTask>><< parameters.testTask >> -PskipInstTests -PskipSmokeTests
             << pipeline.parameters.gradle_flags >>
             --max-workers=8
+            --continue
 
       - run:
           name: Collect reports
@@ -264,7 +265,8 @@ jobs:
             GRADLE_OPTS="-Dorg.gradle.jvmargs='-Xmx1940M -Xms512M -XX:ErrorFile=/tmp/hs_err_pid%p.log' -Ddatadog.forkedMaxHeapSize=512M -Ddatadog.forkedMinHeapSize=128M"
             ./gradlew :dd-java-agent:instrumentation:<<# parameters.prefixTestTask>>testJava<</ parameters.prefixTestTask>><< parameters.testTask >>
             << pipeline.parameters.gradle_flags >>
-            --max-workers=7
+            --max-workers=6
+            --continue
 
       - run:
           name: Collect reports
@@ -321,6 +323,7 @@ jobs:
             ./gradlew stagePlayBinaryDist :dd-smoke-test:<<# parameters.prefixTestTask>>testJava<</ parameters.prefixTestTask>><< parameters.testTask >>
             << pipeline.parameters.gradle_flags >>
             --max-workers=2
+            --continue
 
       - run:
           name: Collect Reports

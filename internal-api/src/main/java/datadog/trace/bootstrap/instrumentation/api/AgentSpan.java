@@ -1,6 +1,7 @@
 package datadog.trace.bootstrap.instrumentation.api;
 
 import datadog.trace.api.DDId;
+import datadog.trace.api.gateway.RequestContext;
 import datadog.trace.api.interceptor.MutableSpan;
 import java.util.Map;
 
@@ -52,6 +53,20 @@ public interface AgentSpan extends MutableSpan {
 
   AgentSpan addThrowable(Throwable throwable);
 
+  /**
+   * Sets the span checkpoint emission state
+   *
+   * @param value {@literal true} to enable checkpoint emission, {@literal false} otherwise
+   */
+  void setEmittingCheckpoints(boolean value);
+
+  /**
+   * Checks the span checkpoint emission state
+   *
+   * @return a {@literal true/false} value or {@literal null} if the state needs to be set yet
+   */
+  Boolean isEmittingCheckpoints();
+
   @Override
   AgentSpan getLocalRootSpan();
 
@@ -70,6 +85,20 @@ public interface AgentSpan extends MutableSpan {
   void finish();
 
   void finish(long finishMicros);
+
+  /**
+   * Finishes the span but does not publish it. The {@link #publish()} method MUST be called once
+   * otherwise the trace will not be reported.
+   *
+   * @return true if the span was successfully finished, false if it was already finished.
+   */
+  boolean phasedFinish();
+
+  /**
+   * Publish a span that was previously finished by calling {@link #phasedFinish()}. Must be called
+   * once and only once per span.
+   */
+  void publish();
 
   CharSequence getSpanName();
 
@@ -91,6 +120,9 @@ public interface AgentSpan extends MutableSpan {
   /** Mark the end of a task associated with the span */
   void finishWork();
 
+  /** RequestContext for the Instrumentation Gateway */
+  RequestContext getRequestContext();
+
   interface Context {
     DDId getTraceId();
 
@@ -99,6 +131,9 @@ public interface AgentSpan extends MutableSpan {
     AgentTrace getTrace();
 
     Iterable<Map.Entry<String, String>> baggageItems();
+
+    /** RequestContext for the Instrumentation Gateway */
+    RequestContext getRequestContext();
 
     interface Extracted extends Context {
       String getForwarded();

@@ -100,11 +100,48 @@ public final class OpenJdkController implements Controller {
       }
     }
 
+    // Toggle settings from override file
+
     try {
       recordingSettings.putAll(
           JfpUtils.readOverrideJfpResource(config.getProfilingTemplateOverrideFile()));
     } catch (final IOException e) {
       throw new ConfigurationException(e);
+    }
+
+    // Toggle settings from config
+
+    if (config.isProfilingHeapEnabled()) {
+      // TODO: when jdk.OldObjectSample is enabled by default in dd.jfp, uncomment the following
+      // if (!Boolean.parseBoolean(recordingSettings.get("jdk.OldObjectSample#enabled"))) {
+      //   if (((isJavaVersion(11) && isJavaVersionAtLeast(11, 0, 12))
+      //       || (isJavaVersion(15) && isJavaVersionAtLeast(15, 0, 4))
+      //       || (isJavaVersion(16) && isJavaVersionAtLeast(16, 0, 2))
+      //       || isJavaVersionAtLeast(17))) {
+      //     // It was enabled based on JDK version so disabled by override file
+      //     log.warn(
+      //         "The OldObjectSample JFR event is disabled with the override file but enabled with
+      // the config.");
+      //   }
+      // }
+      log.debug("Enabling OldObjectSample JFR event with the config.");
+      recordingSettings.put("jdk.OldObjectSample#enabled", "true");
+    }
+
+    if (config.isProfilingAllocationEnabled()) {
+      if (!Boolean.parseBoolean(recordingSettings.get("jdk.ObjectAllocationInNewTLAB#enabled"))
+          || !Boolean.parseBoolean(
+              recordingSettings.get("jdk.ObjectAllocationOutsideTLAB#enabled"))) {
+        if (isJavaVersionAtLeast(16)) {
+          // It was enabled based on JDK version so disabled by override file
+          log.warn(
+              "The ObjectAllocationInNewTLAB and ObjectAllocationOutsideTLAB JFR events are disabled with the override file but enabled with the config.");
+        }
+      }
+      log.debug(
+          "Enabling ObjectAllocationInNewTLAB and ObjectAllocationOutsideTLAB JFR events with the config.");
+      recordingSettings.put("jdk.ObjectAllocationInNewTLAB#enabled", "true");
+      recordingSettings.put("jdk.ObjectAllocationOutsideTLAB#enabled", "true");
     }
 
     this.recordingSettings = Collections.unmodifiableMap(recordingSettings);

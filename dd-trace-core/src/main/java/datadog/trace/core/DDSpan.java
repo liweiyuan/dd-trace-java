@@ -6,6 +6,7 @@ import static datadog.trace.bootstrap.instrumentation.api.Tags.HTTP_STATUS;
 
 import datadog.trace.api.DDId;
 import datadog.trace.api.DDTags;
+import datadog.trace.api.gateway.RequestContext;
 import datadog.trace.api.sampling.PrioritySampling;
 import datadog.trace.bootstrap.instrumentation.api.AgentSpan;
 import datadog.trace.core.util.Clock;
@@ -27,6 +28,8 @@ import org.slf4j.LoggerFactory;
  */
 public class DDSpan implements AgentSpan, CoreSpan<DDSpan> {
   private static final Logger log = LoggerFactory.getLogger(DDSpan.class);
+
+  public static final String CHECKPOINTED_TAG = "checkpointed";
 
   static DDSpan create(final long timestampMicro, @Nonnull DDSpanContext context) {
     final DDSpan span = new DDSpan(timestampMicro, context);
@@ -52,12 +55,18 @@ public class DDSpan implements AgentSpan, CoreSpan<DDSpan> {
   private final long startTimeNano;
 
   /**
-   * The duration in nanoseconds computed using the startTimeMicro or startTimeNano. Span is
-   * considered finished when this is set.
+   * The duration in nanoseconds computed using the startTimeMicro or startTimeNano.<hr> The span's
+   * states are defined as follows:
+   * <li>eq 0 -> unfinished.
+   * <li>lt 0 -> finished but unpublished.
+   * <li>gt 0 -> finished and published.
    */
   private final AtomicLong durationNano = new AtomicLong();
 
   private boolean forceKeep;
+
+  // Marked as volatile to assure proper publication to child spans executed on different threads
+  volatile Boolean emittingCheckpoints = null;
 
   /**
    * Spans should be constructed using the builder, not by calling the constructor directly.
@@ -87,8 +96,9 @@ public class DDSpan implements AgentSpan, CoreSpan<DDSpan> {
   private void finishAndAddToTrace(final long durationNano) {
     // ensure a min duration of 1
     if (this.durationNano.compareAndSet(0, Math.max(1, durationNano))) {
-      PendingTrace.FinishState finishState = context.getTrace().addFinishedSpan(this);
-      log.debug("Finished span ({}): {}", finishState, this);
+      context.getTrace().onFinish(this);
+      PendingTrace.PublishState publishState = context.getTrace().onPublish(this);
+      log.debug("Finished span ({}): {}", publishState, this);
     } else {
       log.debug("Already finished: {}", this);
     }
@@ -111,6 +121,38 @@ public class DDSpan implements AgentSpan, CoreSpan<DDSpan> {
   }
 
   @Override
+  public final boolean phasedFinish() {
+    long durationNano;
+    if (startTimeNano > 0) {
+      durationNano = context.getTrace().getCurrentTimeNano() - startTimeNano;
+    } else {
+      durationNano = TimeUnit.MICROSECONDS.toNanos(Clock.currentMicroTime() - startTimeMicro);
+    }
+    // Flip the negative bit of the result to allow verifying that publish() is only called once.
+    if (this.durationNano.compareAndSet(0, Math.max(1, durationNano) | Long.MIN_VALUE)) {
+      context.getTrace().onFinish(this);
+      log.debug("Finished span (PHASED): {}", this);
+      return true;
+    } else {
+      log.debug("Already finished: {}", this);
+      return false;
+    }
+  }
+
+  @Override
+  public final void publish() {
+    long durationNano = this.durationNano.get();
+    if (durationNano == 0) {
+      log.debug("Can't publish unfinished span: {}", this);
+    } else if (durationNano > 0) {
+      log.debug("Already published: {}", this);
+    } else if (this.durationNano.compareAndSet(durationNano, durationNano & Long.MAX_VALUE)) {
+      PendingTrace.PublishState publishState = context.getTrace().onPublish(this);
+      log.debug("Published span ({}): {}", publishState, this);
+    }
+  }
+
+  @Override
   public DDSpan setError(final boolean error) {
     context.setErrorFlag(error);
     return this;
@@ -130,6 +172,42 @@ public class DDSpan implements AgentSpan, CoreSpan<DDSpan> {
   @Override
   public boolean isForceKeep() {
     return forceKeep;
+  }
+
+  @Override
+  public void setEmittingCheckpoints(boolean value) {
+    /*
+    The decision to emit checkpoints is made at the local root span level.
+    This is to ensure consistency in the emitted checkpoints where the whole
+    local root span subtree must either be fully covered or no checkpoints should
+    be emitted at all.
+     */
+    AgentSpan rootSpan = getLocalRootSpan();
+    if (rootSpan == null) {
+      rootSpan = this;
+    }
+    // rootSpan will always be an instance of DDSpan
+    DDSpan span = (DDSpan) rootSpan;
+    if (span.emittingCheckpoints == null) {
+      span.emittingCheckpoints = value;
+      if (value) {
+        span.setTag(CHECKPOINTED_TAG, value);
+      }
+    }
+  }
+
+  @Override
+  public Boolean isEmittingCheckpoints() {
+    /*
+    The decision to emit checkpoints is made at the local root span level.
+    This is to ensure consistency in the emitted checkpoints where the whole
+    local root span subtree must either be fully covered or no checkpoints should
+    be emitted at all.
+     */
+    DDSpan rootSpan = getLocalRootSpan();
+    return (rootSpan != null && this != rootSpan)
+        ? rootSpan.emittingCheckpoints
+        : emittingCheckpoints;
   }
 
   /**
@@ -172,20 +250,22 @@ public class DDSpan implements AgentSpan, CoreSpan<DDSpan> {
 
   @Override
   public DDSpan addThrowable(final Throwable error) {
-    String message = error.getMessage();
-    if (!"broken pipe".equalsIgnoreCase(message)) {
-      // broken pipes happen when clients abort connections,
-      // which might happen because the application is overloaded
-      // or warming up - capturing the stack trace and keeping
-      // the trace may exacerbate existing problems.
-      setError(true);
-      final StringWriter errorString = new StringWriter();
-      error.printStackTrace(new PrintWriter(errorString));
-      setTag(DDTags.ERROR_STACK, errorString.toString());
-    }
+    if (null != error) {
+      String message = error.getMessage();
+      if (!"broken pipe".equalsIgnoreCase(message)) {
+        // broken pipes happen when clients abort connections,
+        // which might happen because the application is overloaded
+        // or warming up - capturing the stack trace and keeping
+        // the trace may exacerbate existing problems.
+        setError(true);
+        final StringWriter errorString = new StringWriter();
+        error.printStackTrace(new PrintWriter(errorString));
+        setTag(DDTags.ERROR_STACK, errorString.toString());
+      }
 
-    setTag(DDTags.ERROR_MSG, message);
-    setTag(DDTags.ERROR_TYPE, error.getClass().getName());
+      setTag(DDTags.ERROR_MSG, message);
+      setTag(DDTags.ERROR_TYPE, error.getClass().getName());
+    }
 
     return this;
   }
@@ -355,6 +435,11 @@ public class DDSpan implements AgentSpan, CoreSpan<DDSpan> {
   @Override
   public void finishWork() {
     context.getTracer().onFinishWork(this);
+  }
+
+  @Override
+  public RequestContext getRequestContext() {
+    return context.getRequestContext();
   }
 
   /**

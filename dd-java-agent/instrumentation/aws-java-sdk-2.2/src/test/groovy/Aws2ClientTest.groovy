@@ -37,6 +37,9 @@ import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicReference
 
 import static datadog.trace.agent.test.server.http.TestHttpServer.httpServer
+import static datadog.trace.api.Checkpointer.END
+import static datadog.trace.api.Checkpointer.SPAN
+import static datadog.trace.api.Checkpointer.THREAD_MIGRATION
 
 class Aws2ClientTest extends AgentTestRunner {
 
@@ -76,13 +79,15 @@ class Aws2ClientTest extends AgentTestRunner {
       .credentialsProvider(CREDENTIALS_PROVIDER)
       .build()
     responseBody.set(body)
+    when:
     def response = call.call(client)
 
     if (response instanceof Future) {
       response = response.get()
     }
+    TEST_WRITER.waitForTraces(1)
 
-    expect:
+    then:
     executed
     response != null
     response.class.simpleName.startsWith(operation) || response instanceof ResponseInputStream
@@ -95,6 +100,7 @@ class Aws2ClientTest extends AgentTestRunner {
           resourceName "$service.$operation"
           spanType DDSpanTypes.HTTP_CLIENT
           errored false
+          measured true
           parent()
           tags {
             "$Tags.COMPONENT" "java-aws-sdk"
@@ -127,6 +133,7 @@ class Aws2ClientTest extends AgentTestRunner {
           resourceName "$method $path"
           spanType DDSpanTypes.HTTP_CLIENT
           errored false
+          measured true
           childOf(span(0))
           tags {
             "$Tags.COMPONENT" "apache-httpclient"
@@ -143,6 +150,12 @@ class Aws2ClientTest extends AgentTestRunner {
     }
     server.lastRequest.headers.get("x-datadog-trace-id") == null
     server.lastRequest.headers.get("x-datadog-parent-id") == null
+    2 * TEST_CHECKPOINTER.checkpoint(_, SPAN)
+    2 * TEST_CHECKPOINTER.checkpoint(_, SPAN | END)
+    1 * TEST_CHECKPOINTER.checkpoint(_, THREAD_MIGRATION)
+    1 * TEST_CHECKPOINTER.checkpoint(_, THREAD_MIGRATION | END)
+    _ * TEST_CHECKPOINTER.onRootSpan(_, _, _)
+    0 * TEST_CHECKPOINTER._
 
     where:
     service    | operation           | method | path                  | requestId                              | builder                  | call                                                                                             | body
@@ -191,13 +204,15 @@ class Aws2ClientTest extends AgentTestRunner {
       .credentialsProvider(CREDENTIALS_PROVIDER)
       .build()
     responseBody.set(body)
+    when:
     def response = call.call(client)
 
     if (response instanceof Future) {
       response = response.get()
     }
+    TEST_WRITER.waitForTraces(1)
 
-    expect:
+    then:
     executed
     response != null
 
@@ -209,6 +224,7 @@ class Aws2ClientTest extends AgentTestRunner {
           resourceName "$service.$operation"
           spanType DDSpanTypes.HTTP_CLIENT
           errored false
+          measured true
           parent()
           tags {
             "$Tags.COMPONENT" "java-aws-sdk"
@@ -244,6 +260,7 @@ class Aws2ClientTest extends AgentTestRunner {
           resourceName "$method $path"
           spanType DDSpanTypes.HTTP_CLIENT
           errored false
+          measured true
           parent()
           tags {
             "$Tags.COMPONENT" "netty-client"
@@ -261,6 +278,12 @@ class Aws2ClientTest extends AgentTestRunner {
     }
     server.lastRequest.headers.get("x-datadog-trace-id") == null
     server.lastRequest.headers.get("x-datadog-parent-id") == null
+    2 * TEST_CHECKPOINTER.checkpoint(_, SPAN)
+    2 * TEST_CHECKPOINTER.checkpoint(_, SPAN | END)
+    1 * TEST_CHECKPOINTER.checkpoint(_, THREAD_MIGRATION)
+    1 * TEST_CHECKPOINTER.checkpoint(_, THREAD_MIGRATION | END)
+    _ * TEST_CHECKPOINTER.onRootSpan(_, _, _)
+    0 * TEST_CHECKPOINTER._
 
     where:
     service    | operation           | method | path                  | requestId                              | builder                       | call                                                                                                                             | body

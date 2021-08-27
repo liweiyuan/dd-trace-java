@@ -7,9 +7,19 @@ import datadog.trace.api.DDSpanTypes
 import datadog.trace.api.DDTags
 import datadog.trace.api.config.GeneralConfig
 import datadog.trace.api.env.CapturedEnvironment
+import datadog.trace.api.function.BiFunction
+import datadog.trace.api.function.Supplier
+import datadog.trace.api.function.TriConsumer
+import datadog.trace.api.gateway.Events
+import datadog.trace.api.gateway.Flow
+import datadog.trace.api.gateway.RequestContext
+import datadog.trace.api.http.StoredBodySupplier
+import datadog.trace.bootstrap.instrumentation.api.AgentTracer
 import datadog.trace.bootstrap.instrumentation.api.Tags
+import datadog.trace.bootstrap.instrumentation.api.URIDataAdapter
 import datadog.trace.bootstrap.instrumentation.api.URIUtils
 import okhttp3.HttpUrl
+import okhttp3.MediaType
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.Response
@@ -18,6 +28,7 @@ import org.slf4j.LoggerFactory
 import spock.lang.Shared
 import spock.lang.Unroll
 
+import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.CREATED
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.CUSTOM_EXCEPTION
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.ERROR
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.EXCEPTION
@@ -32,6 +43,7 @@ import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.SUCCES
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.TIMEOUT
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.TIMEOUT_ERROR
 import static datadog.trace.agent.test.base.HttpServerTest.ServerEndpoint.UNKNOWN
+import static datadog.trace.agent.test.utils.TraceUtils.basicSpan
 import static datadog.trace.agent.test.utils.TraceUtils.runUnderTrace
 import static datadog.trace.api.config.TraceInstrumentationConfig.HTTP_SERVER_RAW_QUERY_STRING
 import static datadog.trace.api.config.TraceInstrumentationConfig.HTTP_SERVER_RAW_RESOURCE
@@ -40,6 +52,7 @@ import static datadog.trace.api.config.TraceInstrumentationConfig.SERVLET_ASYNC_
 import static datadog.trace.api.http.UrlBasedResourceNameCalculator.SIMPLE_PATH_NORMALIZER
 import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.activeScope
 import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.activeSpan
+import static datadog.trace.bootstrap.instrumentation.api.AgentTracer.get
 import static org.junit.Assume.assumeTrue
 
 @Unroll
@@ -48,6 +61,17 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
   public static final Logger SERVER_LOGGER = LoggerFactory.getLogger("http-server")
   static {
     ((ch.qos.logback.classic.Logger) SERVER_LOGGER).setLevel(Level.DEBUG)
+  }
+
+  def setupSpec() {
+    // Register the Instrumentation Gateway callbacks
+    def ig = get().instrumentationGateway()
+    def callbacks = new IGCallbacks()
+    ig.registerCallback(Events.REQUEST_STARTED, callbacks.requestStartedCb)
+    ig.registerCallback(Events.REQUEST_HEADER, callbacks.requestHeaderCb)
+    ig.registerCallback(Events.REQUEST_URI_RAW, callbacks.requestUriRawCb)
+    ig.registerCallback(Events.REQUEST_BODY_START, callbacks.requestBodyStartCb)
+    ig.registerCallback(Events.REQUEST_BODY_DONE, callbacks.requestBodyEndCb)
   }
 
   @Shared
@@ -190,6 +214,10 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
     false
   }
 
+  boolean testRequestBody() {
+    false
+  }
+
   /** Tomcat 5.5 can't seem to handle the encoded URIs */
   boolean testEncodedPath() {
     true
@@ -202,6 +230,7 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
 
   enum ServerEndpoint {
     SUCCESS("success", 200, "success"),
+    CREATED("created", 201, "created"),
     REDIRECT("redirect", 302, "/redirected"),
     FORWARDED("forwarded", 200, "1.2.3.4"),
     ERROR("error-status", 500, "controller error"), // "error" is a special path for some frameworks
@@ -757,6 +786,69 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
 
   //FIXME: add tests for POST with large/chunked data
 
+  def "test instrumentation gateway callbacks for #endpoint with #header = #value"() {
+    setup:
+    injectSysConfig(HTTP_SERVER_TAG_QUERY_STRING, "true")
+    def request = request(endpoint, "GET",  null).header(header, value).build()
+    def traces = extraSpan ? 2 : 1
+
+    when:
+    def response = client.newCall(request).execute()
+
+    then:
+    response.code() == endpoint.status
+    response.body().string() == endpoint.body
+
+    and:
+    assertTraces(traces) {
+      trace(spanCount(endpoint)) {
+        sortSpansByStart()
+        serverSpan(it, null, null, "GET", endpoint)
+        if (hasHandlerSpan()) {
+          handlerSpan(it, endpoint)
+        }
+        controllerSpan(it)
+        if (hasResponseSpan(endpoint)) {
+          responseSpan(it, endpoint)
+        }
+      }
+      if (extraSpan) {
+        trace(1) {
+          basicSpan(it, "$header-$value")
+        }
+      }
+    }
+
+    where:
+    endpoint            | header              | value       | extraSpan
+    QUERY_ENCODED_BOTH  | IG_TEST_HEADER      | "something" | true
+    QUERY_ENCODED_BOTH  | "x-ignored"         | "something" | false
+    SUCCESS             | IG_TEST_HEADER      | "whatever"  | false
+    QUERY_ENCODED_QUERY | IG_TEST_HEADER      | "whatever"  | false
+    QUERY_PARAM         | IG_TEST_HEADER      | "whatever"  | false
+  }
+
+  def 'test instrumentation gateway request body interception'() {
+    setup:
+    assumeTrue(testRequestBody())
+    def request = request(
+      CREATED, 'POST',
+      RequestBody.create(MediaType.get('text/plain'), 'my body'))
+      .build()
+    def response = client.newCall(request).execute()
+
+    expect:
+    response.body().charStream().text == 'created: my body'
+
+    when:
+    TEST_WRITER.waitForTraces(1)
+
+    then:
+    TEST_WRITER.get(0).any {
+      it.getTag('request.body') == 'my body'
+    }
+  }
+
   void controllerSpan(TraceAssert trace, ServerEndpoint endpoint = null) {
     def exception = endpoint == CUSTOM_EXCEPTION ? InputMismatchException : expectedExceptionType()
     def errorMessage = endpoint?.body
@@ -843,6 +935,59 @@ abstract class HttpServerTest<SERVER> extends WithHttpServer<SERVER> {
         defaultTags(true)
         addTags(expectedExtraServerTags)
       }
+    }
+  }
+
+  static final String IG_TEST_HEADER = "x-ig-test-header"
+
+  class IGCallbacks {
+    static class Context implements RequestContext {
+      String extraSpan
+      StoredBodySupplier requestBodySupplier
+    }
+
+    final Supplier<Flow<RequestContext>> requestStartedCb =
+    {
+      ->
+      new Flow.ResultFlow<RequestContext>(new Context())
+    }
+
+    final TriConsumer<RequestContext, String, String> requestHeaderCb =
+    { Context context, String key, String value ->
+      if (HttpServerTest.IG_TEST_HEADER.equalsIgnoreCase(key)) {
+        context.extraSpan = value
+      }
+    }
+
+    private static final String EXPECTED = "${QUERY_ENCODED_BOTH.rawPath}?${QUERY_ENCODED_BOTH.rawQuery}"
+
+    final BiFunction<RequestContext, URIDataAdapter, Flow<Void>> requestUriRawCb =
+    { Context context, URIDataAdapter uri ->
+      String raw = uri.supportsRaw() ? uri.raw() : ''
+      raw = uri.hasPlusEncodedSpaces() ? raw.replace('+', '%20') : raw
+      // Only trigger for query path without query parameters and with special header
+      if (raw.endsWith(EXPECTED) && context.extraSpan) {
+        runUnderTrace("$IG_TEST_HEADER-${context.extraSpan}", false) {}
+        // Only do this for the first time since some instrumentations with handler spans may call
+        // DECORATE.onRequest multiple times
+        context.extraSpan = null
+      }
+      Flow.ResultFlow.empty()
+    }
+
+    final BiFunction<RequestContext, StoredBodySupplier, Void> requestBodyStartCb =
+    { Context context, StoredBodySupplier supplier ->
+      context.requestBodySupplier = supplier
+      null
+    }
+
+    final BiFunction<RequestContext, StoredBodySupplier, Flow<Void>> requestBodyEndCb =
+    { Context context, StoredBodySupplier supplier ->
+      if (!context.requestBodySupplier.is(supplier)) {
+        throw new RuntimeException("Expected same instance: ${context.requestBodySupplier} and $supplier")
+      }
+      AgentTracer.activeSpan().localRootSpan.setTag('request.body', supplier.get() as String)
+      Flow.ResultFlow.empty()
     }
   }
 }

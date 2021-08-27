@@ -25,6 +25,8 @@ import java.util.function.BiFunction
 import java.util.function.Consumer
 import java.util.function.Function
 
+import static datadog.trace.api.Checkpointer.END
+import static datadog.trace.api.Checkpointer.THREAD_MIGRATION
 import static datadog.trace.instrumentation.lettuce5.LettuceInstrumentationUtil.AGENT_CRASHING_COMMAND_PREFIX
 
 class Lettuce5AsyncClientTest extends AgentTestRunner {
@@ -109,6 +111,7 @@ class Lettuce5AsyncClientTest extends AgentTestRunner {
     ConnectionFuture connectionFuture = testConnectionClient.connectAsync(StringCodec.UTF8,
       new RedisURI(HOST, port, 3, TimeUnit.SECONDS))
     StatefulConnection connection = connectionFuture.get()
+    TEST_WRITER.waitForTraces(1)
 
     then:
     connection != null
@@ -133,6 +136,8 @@ class Lettuce5AsyncClientTest extends AgentTestRunner {
         }
       }
     }
+    _ * TEST_CHECKPOINTER.checkpoint(_, THREAD_MIGRATION)
+    _ * TEST_CHECKPOINTER.checkpoint(_, THREAD_MIGRATION | END)
 
     cleanup:
     connection.close()

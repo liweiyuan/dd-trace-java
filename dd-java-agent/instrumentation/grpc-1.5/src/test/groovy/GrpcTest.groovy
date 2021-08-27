@@ -1,5 +1,7 @@
 import com.google.common.util.concurrent.MoreExecutors
 import datadog.trace.agent.test.AgentTestRunner
+import datadog.trace.agent.test.checkpoints.CheckpointValidator
+import datadog.trace.agent.test.checkpoints.CheckpointValidationMode
 import datadog.trace.api.DDId
 import datadog.trace.api.DDSpanTypes
 import datadog.trace.bootstrap.instrumentation.api.AgentPropagation
@@ -39,6 +41,10 @@ class GrpcTest extends AgentTestRunner {
 
   def "test request-response"() {
     setup:
+    CheckpointValidator.excludeValidations_DONOTUSE_I_REPEAT_DO_NOT_USE(
+      CheckpointValidationMode.INTERVALS,
+      CheckpointValidationMode.THREAD_SEQUENCE)
+
     ExecutorService responseExecutor = Executors.newSingleThreadExecutor()
     BindableService greeter = new GreeterGrpc.GreeterImplBase() {
         @Override
@@ -55,7 +61,9 @@ class GrpcTest extends AgentTestRunner {
           }
         }
       }
-    Server server = InProcessServerBuilder.forName(getClass().name).addService(greeter).executor(executor).build().start()
+    def builder = InProcessServerBuilder.forName(getClass().name).addService(greeter).executor(executor)
+    (0..extraBuildCalls).each {builder.build()}
+    Server server = builder.build().start()
 
     ManagedChannel channel = InProcessChannelBuilder.forName(getClass().name).build()
     GreeterGrpc.GreeterBlockingStub client = GreeterGrpc.newBlockingStub(channel)
@@ -79,10 +87,13 @@ class GrpcTest extends AgentTestRunner {
           spanType DDSpanTypes.RPC
           childOf span(0)
           errored false
+          measured true
           tags {
             "$Tags.COMPONENT" "grpc-client"
             "$Tags.SPAN_KIND" Tags.SPAN_KIND_CLIENT
             "status.code" "OK"
+            "request.type" "example.Helloworld\$Request"
+            "response.type" "example.Helloworld\$Response"
             defaultTags()
           }
         }
@@ -92,6 +103,7 @@ class GrpcTest extends AgentTestRunner {
           spanType DDSpanTypes.RPC
           childOf span(1)
           errored false
+          measured true
           tags {
             "$Tags.COMPONENT" "grpc-client"
             "$Tags.SPAN_KIND" Tags.SPAN_KIND_CLIENT
@@ -107,6 +119,7 @@ class GrpcTest extends AgentTestRunner {
           spanType DDSpanTypes.RPC
           childOf trace(0).get(1)
           errored false
+          measured true
           tags {
             "$Tags.COMPONENT" "grpc-server"
             "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
@@ -120,6 +133,7 @@ class GrpcTest extends AgentTestRunner {
           spanType DDSpanTypes.RPC
           childOf span(0)
           errored false
+          measured true
           tags {
             "$Tags.COMPONENT" "grpc-server"
             "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
@@ -129,12 +143,12 @@ class GrpcTest extends AgentTestRunner {
         }
       }
     }
-    5 * TEST_CHECKPOINTER.checkpoint(_, _, SPAN)
-    5 * TEST_CHECKPOINTER.checkpoint(_, _, SPAN | END)
-    contexts * TEST_CHECKPOINTER.checkpoint(_, _, THREAD_MIGRATION)
-    contexts * TEST_CHECKPOINTER.checkpoint(_, _, THREAD_MIGRATION | END)
-    contexts * TEST_CHECKPOINTER.checkpoint(_, _, CPU | END)
-    _ * TEST_CHECKPOINTER.onRootSpanPublished(_, _)
+    5 * TEST_CHECKPOINTER.checkpoint(_, SPAN)
+    5 * TEST_CHECKPOINTER.checkpoint(_, SPAN | END)
+    _ * TEST_CHECKPOINTER.checkpoint(_, THREAD_MIGRATION)
+    _ * TEST_CHECKPOINTER.checkpoint(_, THREAD_MIGRATION | END)
+    _ * TEST_CHECKPOINTER.checkpoint(_, CPU | END)
+    _ * TEST_CHECKPOINTER.onRootSpan(_, _, _)
     0 * TEST_CHECKPOINTER._
 
     cleanup:
@@ -145,13 +159,19 @@ class GrpcTest extends AgentTestRunner {
     }
 
     where:
-    name              | executor                            | contexts
+    name              | executor                            | extraBuildCalls
+    "some name"       | MoreExecutors.directExecutor()      | 0
+    "some other name" | MoreExecutors.directExecutor()      | 0
+    "some name"       | newWorkStealingPool()               | 0
+    "some other name" | newWorkStealingPool()               | 0
+    "some name"       | Executors.newSingleThreadExecutor() | 0
+    "some other name" | Executors.newSingleThreadExecutor() | 0
     "some name"       | MoreExecutors.directExecutor()      | 1
     "some other name" | MoreExecutors.directExecutor()      | 1
-    "some name"       | newWorkStealingPool()               | 3
-    "some other name" | newWorkStealingPool()               | 3
-    "some name"       | Executors.newSingleThreadExecutor() | 3
-    "some other name" | Executors.newSingleThreadExecutor() | 3
+    "some name"       | newWorkStealingPool()               | 1
+    "some other name" | newWorkStealingPool()               | 1
+    "some name"       | Executors.newSingleThreadExecutor() | 1
+    "some other name" | Executors.newSingleThreadExecutor() | 1
   }
 
   def "test error - #name"() {
@@ -185,11 +205,14 @@ class GrpcTest extends AgentTestRunner {
           spanType DDSpanTypes.RPC
           parent()
           errored true
+          measured true
           tags {
             "$Tags.COMPONENT" "grpc-client"
             "$Tags.SPAN_KIND" Tags.SPAN_KIND_CLIENT
             "status.code" "${status.code.name()}"
             "status.description" description
+            "request.type" "example.Helloworld\$Request"
+            "response.type" "example.Helloworld\$Response"
             defaultTags()
           }
         }
@@ -201,6 +224,7 @@ class GrpcTest extends AgentTestRunner {
           spanType DDSpanTypes.RPC
           childOf trace(0).get(0)
           errored true
+          measured true
           tags {
             "$Tags.COMPONENT" "grpc-server"
             "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
@@ -218,6 +242,7 @@ class GrpcTest extends AgentTestRunner {
           spanType DDSpanTypes.RPC
           childOf span(0)
           errored false
+          measured true
           tags {
             "$Tags.COMPONENT" "grpc-server"
             "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
@@ -228,9 +253,9 @@ class GrpcTest extends AgentTestRunner {
       }
     }
 
-    3 * TEST_CHECKPOINTER.checkpoint(_, _, SPAN)
-    3 * TEST_CHECKPOINTER.checkpoint(_, _, SPAN | END)
-    _ * TEST_CHECKPOINTER.onRootSpanPublished(_, _)
+    3 * TEST_CHECKPOINTER.checkpoint(_, SPAN)
+    3 * TEST_CHECKPOINTER.checkpoint(_, SPAN | END)
+    _ * TEST_CHECKPOINTER.onRootSpan(_, _, _)
     0 * TEST_CHECKPOINTER._
 
     cleanup:
@@ -249,6 +274,11 @@ class GrpcTest extends AgentTestRunner {
 
   def "test error thrown - #name"() {
     setup:
+    CheckpointValidator.excludeValidations_DONOTUSE_I_REPEAT_DO_NOT_USE(
+      CheckpointValidationMode.INTERVALS,
+      CheckpointValidationMode.SUSPEND_RESUME,
+      CheckpointValidationMode.THREAD_SEQUENCE)
+
     def error = status.asRuntimeException()
     BindableService greeter = new GreeterGrpc.GreeterImplBase() {
         @Override
@@ -278,10 +308,13 @@ class GrpcTest extends AgentTestRunner {
           spanType DDSpanTypes.RPC
           parent()
           errored true
+          measured true
           tags {
             "$Tags.COMPONENT" "grpc-client"
             "$Tags.SPAN_KIND" Tags.SPAN_KIND_CLIENT
             "status.code" "UNKNOWN"
+            "request.type" "example.Helloworld\$Request"
+            "response.type" "example.Helloworld\$Response"
             defaultTags()
           }
         }
@@ -293,6 +326,7 @@ class GrpcTest extends AgentTestRunner {
           spanType DDSpanTypes.RPC
           childOf trace(0).get(0)
           errored true
+          measured true
           tags {
             "$Tags.COMPONENT" "grpc-server"
             "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
@@ -306,6 +340,7 @@ class GrpcTest extends AgentTestRunner {
           spanType DDSpanTypes.RPC
           childOf span(0)
           errored false
+          measured true
           tags {
             "$Tags.COMPONENT" "grpc-server"
             "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
@@ -316,9 +351,9 @@ class GrpcTest extends AgentTestRunner {
       }
     }
 
-    3 * TEST_CHECKPOINTER.checkpoint(_, _, SPAN)
-    3 * TEST_CHECKPOINTER.checkpoint(_, _, SPAN | END)
-    _ * TEST_CHECKPOINTER.onRootSpanPublished(_, _)
+    3 * TEST_CHECKPOINTER.checkpoint(_, SPAN)
+    3 * TEST_CHECKPOINTER.checkpoint(_, SPAN | END)
+    _ * TEST_CHECKPOINTER.onRootSpan(_, _, _)
     0 * TEST_CHECKPOINTER._
 
     cleanup:
@@ -358,6 +393,10 @@ class GrpcTest extends AgentTestRunner {
 
   def "test ignore ignored methods"() {
     setup:
+    CheckpointValidator.excludeValidations_DONOTUSE_I_REPEAT_DO_NOT_USE(
+      CheckpointValidationMode.INTERVALS,
+      CheckpointValidationMode.THREAD_SEQUENCE)
+
     ExecutorService responseExecutor = Executors.newSingleThreadExecutor()
     BindableService greeter = new GreeterGrpc.GreeterImplBase() {
         @Override
@@ -393,6 +432,7 @@ class GrpcTest extends AgentTestRunner {
           spanType DDSpanTypes.RPC
           parentDDId DDId.ZERO
           errored false
+          measured true
           tags {
             "$Tags.COMPONENT" "grpc-server"
             "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER
@@ -406,6 +446,7 @@ class GrpcTest extends AgentTestRunner {
           spanType DDSpanTypes.RPC
           childOf span(0)
           errored false
+          measured true
           tags {
             "$Tags.COMPONENT" "grpc-server"
             "$Tags.SPAN_KIND" Tags.SPAN_KIND_SERVER

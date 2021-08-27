@@ -1,11 +1,18 @@
 import datadog.trace.agent.test.base.HttpServer
 import datadog.trace.agent.test.base.HttpServerTest
+import datadog.trace.agent.test.checkpoints.CheckpointValidator
+import datadog.trace.agent.test.checkpoints.CheckpointValidationMode
 import datadog.trace.agent.test.utils.ThreadUtils
 import datadog.trace.instrumentation.akkahttp.AkkaHttpServerDecorator
 import okhttp3.Request
 import spock.lang.Shared
 
 import java.util.concurrent.atomic.AtomicInteger
+
+import static datadog.trace.api.Checkpointer.CPU
+import static datadog.trace.api.Checkpointer.END
+import static datadog.trace.api.Checkpointer.SPAN
+import static datadog.trace.api.Checkpointer.THREAD_MIGRATION
 
 abstract class AkkaHttpServerInstrumentationTest extends HttpServerTest<AkkaHttpTestWebServer> {
 
@@ -66,6 +73,23 @@ abstract class AkkaHttpServerInstrumentationTest extends HttpServerTest<AkkaHttp
     and:
     TEST_WRITER.waitForTraces(totalInvocations)
   }
+
+  def "checkpoints balance"() {
+    when:
+    ThreadUtils.runConcurrently(10, totalInvocations, {
+      def id = counter.incrementAndGet()
+      doAndValidateRequest(id)
+    })
+    TEST_WRITER.waitForTraces(totalInvocations)
+    then:
+    totalInvocations * TEST_CHECKPOINTER.checkpoint(_, SPAN)
+    totalInvocations * TEST_CHECKPOINTER.checkpoint(_, SPAN | END)
+    _ * TEST_CHECKPOINTER.checkpoint(_, THREAD_MIGRATION)
+    _ * TEST_CHECKPOINTER.checkpoint(_, THREAD_MIGRATION | END)
+    _ * TEST_CHECKPOINTER.checkpoint(_, CPU | END)
+    _ * TEST_CHECKPOINTER.onRootSpan(_, _, _)
+    0 * TEST_CHECKPOINTER._
+  }
 }
 
 class AkkaHttpServerInstrumentationSyncTest extends AkkaHttpServerInstrumentationTest {
@@ -80,6 +104,12 @@ class AkkaHttpServerInstrumentationAsyncTest extends AkkaHttpServerInstrumentati
   HttpServer server() {
     return new AkkaHttpTestWebServer(AkkaHttpTestWebServer.BindAndHandleAsync())
   }
+
+  @Override
+  def setup() {
+    CheckpointValidator.excludeValidations_DONOTUSE_I_REPEAT_DO_NOT_USE(
+      CheckpointValidationMode.INTERVALS)
+  }
 }
 
 class AkkaHttpServerInstrumentationBindAndHandleTest extends AkkaHttpServerInstrumentationTest {
@@ -91,6 +121,12 @@ class AkkaHttpServerInstrumentationBindAndHandleTest extends AkkaHttpServerInstr
   @Override
   boolean redirectHasBody() {
     return true
+  }
+
+  @Override
+  def setup() {
+    CheckpointValidator.excludeValidations_DONOTUSE_I_REPEAT_DO_NOT_USE(
+      CheckpointValidationMode.INTERVALS)
   }
 }
 
@@ -104,11 +140,23 @@ class AkkaHttpServerInstrumentationBindAndHandleAsyncWithRouteAsyncHandlerTest e
   boolean redirectHasBody() {
     return true
   }
+
+  @Override
+  def setup() {
+    CheckpointValidator.excludeValidations_DONOTUSE_I_REPEAT_DO_NOT_USE(
+      CheckpointValidationMode.INTERVALS)
+  }
 }
 
 class AkkaHttpServerInstrumentationAsyncHttp2Test extends AkkaHttpServerInstrumentationTest {
   @Override
   HttpServer server() {
     return new AkkaHttpTestWebServer(AkkaHttpTestWebServer.BindAndHandleAsyncHttp2())
+  }
+
+  @Override
+  def setup() {
+    CheckpointValidator.excludeValidations_DONOTUSE_I_REPEAT_DO_NOT_USE(
+      CheckpointValidationMode.INTERVALS)
   }
 }

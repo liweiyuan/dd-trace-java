@@ -20,6 +20,7 @@ import java.sql.Statement
 
 import static datadog.trace.agent.test.utils.TraceUtils.basicSpan
 import static datadog.trace.agent.test.utils.TraceUtils.runUnderTrace
+import static datadog.trace.api.Checkpointer.*
 import static datadog.trace.api.config.TraceInstrumentationConfig.DB_CLIENT_HOST_SPLIT_BY_INSTANCE
 
 // workaround for SSLHandShakeException on J9 only with Hikari/MySQL
@@ -182,6 +183,7 @@ class RemoteJDBCInstrumentationTest extends AgentTestRunner {
     ResultSet resultSet = runUnderTrace("parent") {
       return statement.executeQuery(query)
     }
+    TEST_WRITER.waitForTraces(1)
 
     then:
     resultSet.next()
@@ -213,6 +215,10 @@ class RemoteJDBCInstrumentationTest extends AgentTestRunner {
         }
       }
     }
+    2 * TEST_CHECKPOINTER.checkpoint(_, SPAN)
+    2 * TEST_CHECKPOINTER.checkpoint(_, SPAN | END)
+    _ * TEST_CHECKPOINTER.onRootSpan(_, _, _)
+    0 * _
 
     cleanup:
     statement.close()
@@ -234,12 +240,15 @@ class RemoteJDBCInstrumentationTest extends AgentTestRunner {
   def "prepared statement execute on #driver with #connection.getClass().getCanonicalName() generates a span"() {
     setup:
     PreparedStatement statement = connection.prepareStatement(query)
+
+    when:
     ResultSet resultSet = runUnderTrace("parent") {
       assert statement.execute()
       return statement.resultSet
     }
+    TEST_WRITER.waitForTraces(1)
 
-    expect:
+    then:
     resultSet.next()
     resultSet.getInt(1) == 3
     assertTraces(1) {
@@ -270,6 +279,10 @@ class RemoteJDBCInstrumentationTest extends AgentTestRunner {
         }
       }
     }
+    2 * TEST_CHECKPOINTER.checkpoint(_, SPAN)
+    2 * TEST_CHECKPOINTER.checkpoint(_, SPAN | END)
+    _ * TEST_CHECKPOINTER.onRootSpan(_, _, _)
+    0 * _
 
     cleanup:
     statement.close()
@@ -291,11 +304,13 @@ class RemoteJDBCInstrumentationTest extends AgentTestRunner {
   def "prepared statement query on #driver with #connection.getClass().getCanonicalName() generates a span"() {
     setup:
     PreparedStatement statement = connection.prepareStatement(query)
+    when:
     ResultSet resultSet = runUnderTrace("parent") {
       return statement.executeQuery()
     }
+    TEST_WRITER.waitForTraces(1)
 
-    expect:
+    then:
     resultSet.next()
     resultSet.getInt(1) == 3
     assertTraces(1) {
@@ -326,6 +341,10 @@ class RemoteJDBCInstrumentationTest extends AgentTestRunner {
         }
       }
     }
+    2 * TEST_CHECKPOINTER.checkpoint(_, SPAN)
+    2 * TEST_CHECKPOINTER.checkpoint(_, SPAN | END)
+    _ * TEST_CHECKPOINTER.onRootSpan(_, _, _)
+    0 * _
 
     cleanup:
     statement.close()
@@ -347,11 +366,13 @@ class RemoteJDBCInstrumentationTest extends AgentTestRunner {
   def "prepared call on #driver with #connection.getClass().getCanonicalName() generates a span"() {
     setup:
     CallableStatement statement = connection.prepareCall(query)
+    when:
     ResultSet resultSet = runUnderTrace("parent") {
       return statement.executeQuery()
     }
+    TEST_WRITER.waitForTraces(1)
 
-    expect:
+    then:
     resultSet.next()
     resultSet.getInt(1) == 3
     assertTraces(1) {
@@ -382,6 +403,10 @@ class RemoteJDBCInstrumentationTest extends AgentTestRunner {
         }
       }
     }
+    2 * TEST_CHECKPOINTER.checkpoint(_, SPAN)
+    2 * TEST_CHECKPOINTER.checkpoint(_, SPAN | END)
+    _ * TEST_CHECKPOINTER.onRootSpan(_, _, _)
+    0 * _
 
     cleanup:
     statement.close()
@@ -405,10 +430,13 @@ class RemoteJDBCInstrumentationTest extends AgentTestRunner {
     Statement statement = connection.createStatement()
     def sql = connection.nativeSQL(query)
 
-    expect:
+    when:
     runUnderTrace("parent") {
       return !statement.execute(sql)
     }
+    TEST_WRITER.waitForTraces(1)
+
+    then:
     statement.updateCount == 0
     assertTraces(1) {
       trace(2) {
@@ -437,6 +465,10 @@ class RemoteJDBCInstrumentationTest extends AgentTestRunner {
         }
       }
     }
+    2 * TEST_CHECKPOINTER.checkpoint(_, SPAN)
+    2 * TEST_CHECKPOINTER.checkpoint(_, SPAN | END)
+    _ * TEST_CHECKPOINTER.onRootSpan(_, _, _)
+    0 * _
 
     cleanup:
     statement.close()

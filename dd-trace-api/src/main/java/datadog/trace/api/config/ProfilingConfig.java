@@ -8,6 +8,8 @@ package datadog.trace.api.config;
  */
 public final class ProfilingConfig {
   public static final String PROFILING_ENABLED = "profiling.enabled";
+  public static final String PROFILING_ALLOCATION_ENABLED = "profiling.allocation.enabled";
+  public static final String PROFILING_HEAP_ENABLED = "profiling.heap.enabled";
   @Deprecated // Use dd.site instead
   public static final String PROFILING_URL = "profiling.url";
   @Deprecated // Use dd.api-key instead
@@ -47,6 +49,8 @@ public final class ProfilingConfig {
       "profiling.legacy.tracing.integration";
   public static final String PROFILING_CHECKPOINTS_RECORD_CPU_TIME =
       "profiling.checkpoints.record.cpu.time";
+  public static final String PROFILING_CHECKPOINTS_RATE_LIMIT = "profiling.checkpoints.rate.limit";
+  public static final int PROFILING_CHECKPOINTS_RATE_LIMIT_DEFAULT = 50000;
 
   // Not intended for production use
   public static final String PROFILING_AGENTLESS = "profiling.agentless";

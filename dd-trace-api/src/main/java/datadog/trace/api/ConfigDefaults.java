@@ -22,6 +22,7 @@ public final class ConfigDefaults {
   public static final String DEFAULT_DOGSTATSD_SOCKET_PATH = "/var/run/datadog/dsd.socket";
   public static final int DEFAULT_AGENT_TIMEOUT = 10; // timeout in seconds
   public static final String DEFAULT_SERVICE_NAME = "unnamed-java-app";
+  public static final String DEFAULT_SERVLET_ROOT_CONTEXT_SERVICE_NAME = "root-servlet";
 
   static final String DEFAULT_SITE = "datadoghq.com";
 
@@ -57,6 +58,8 @@ public final class ConfigDefaults {
   static final boolean DEFAULT_LOGS_INJECTION_ENABLED = true;
 
   static final boolean DEFAULT_PROFILING_ENABLED = false;
+  static final boolean DEFAULT_PROFILING_ALLOCATION_ENABLED = false;
+  static final boolean DEFAULT_PROFILING_HEAP_ENABLED = false;
   static final int DEFAULT_PROFILING_START_DELAY = 10;
   static final boolean DEFAULT_PROFILING_START_FORCE_FIRST = false;
   static final int DEFAULT_PROFILING_UPLOAD_PERIOD = 60; // 1 min
@@ -69,7 +72,11 @@ public final class ConfigDefaults {
   static final boolean DEFAULT_PROFILING_AGENTLESS = false;
   static final boolean DEFAULT_PROFILING_LEGACY_TRACING_INTEGRATION = true;
 
+  static final boolean DEFAULT_APPSEC_ENABLED = false;
+
   static final boolean DEFAULT_KAFKA_CLIENT_PROPAGATION_ENABLED = true;
+  static final boolean DEFAULT_JMS_PROPAGATION_ENABLED = true;
+  static final boolean DEFAULT_RABBIT_PROPAGATION_ENABLED = true;
 
   static final boolean DEFAULT_TRACE_REPORT_HOSTNAME = false;
   static final String DEFAULT_TRACE_ANNOTATIONS = null;

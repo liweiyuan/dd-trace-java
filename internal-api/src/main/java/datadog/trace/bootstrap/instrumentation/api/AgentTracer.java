@@ -5,6 +5,8 @@ import static datadog.trace.api.ConfigDefaults.DEFAULT_ASYNC_PROPAGATING;
 import datadog.trace.api.Checkpointer;
 import datadog.trace.api.DDId;
 import datadog.trace.api.SpanCheckpointer;
+import datadog.trace.api.gateway.InstrumentationGateway;
+import datadog.trace.api.gateway.RequestContext;
 import datadog.trace.api.interceptor.TraceInterceptor;
 import datadog.trace.api.sampling.PrioritySampling;
 import datadog.trace.bootstrap.instrumentation.api.AgentSpan.Context;
@@ -124,6 +126,8 @@ public class AgentTracer {
      * @param checkpointer
      */
     void registerCheckpointer(Checkpointer checkpointer);
+
+    InstrumentationGateway instrumentationGateway();
   }
 
   public interface SpanBuilder {
@@ -283,7 +287,12 @@ public class AgentTracer {
     public void onFinish(AgentSpan span) {}
 
     @Override
-    public void onRootSpanPublished(AgentSpan root) {}
+    public void onRootSpan(AgentSpan root, boolean published) {}
+
+    @Override
+    public InstrumentationGateway instrumentationGateway() {
+      return null;
+    }
   }
 
   public static class NoopAgentSpan implements AgentSpan {
@@ -409,6 +418,11 @@ public class AgentTracer {
     public void finishWork() {}
 
     @Override
+    public RequestContext getRequestContext() {
+      return null;
+    }
+
+    @Override
     public Integer getSamplingPriority() {
       return (int) PrioritySampling.UNSET;
     }
@@ -512,6 +526,14 @@ public class AgentTracer {
     public void finish(final long finishMicros) {}
 
     @Override
+    public boolean phasedFinish() {
+      return false;
+    }
+
+    @Override
+    public void publish() {}
+
+    @Override
     public String getSpanName() {
       return "";
     }
@@ -522,6 +544,14 @@ public class AgentTracer {
     @Override
     public boolean hasResourceName() {
       return false;
+    }
+
+    @Override
+    public void setEmittingCheckpoints(boolean value) {}
+
+    @Override
+    public Boolean isEmittingCheckpoints() {
+      return Boolean.FALSE;
     }
   }
 
@@ -535,6 +565,11 @@ public class AgentTracer {
 
     @Override
     public void setAsyncPropagation(final boolean value) {}
+
+    @Override
+    public boolean checkpointed() {
+      return false;
+    }
 
     @Override
     public AgentScope.Continuation capture() {
@@ -635,6 +670,11 @@ public class AgentTracer {
 
     @Override
     public String getForwardedPort() {
+      return null;
+    }
+
+    @Override
+    public RequestContext getRequestContext() {
       return null;
     }
   }

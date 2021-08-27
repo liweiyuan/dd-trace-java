@@ -46,6 +46,16 @@ public final class TraceInstrumentationConfig {
   public static final String KAFKA_CLIENT_BASE64_DECODING_ENABLED =
       "kafka.client.base64.decoding.enabled";
 
+  public static final String JMS_PROPAGATION_ENABLED = "jms.propagation.enabled";
+  public static final String JMS_PROPAGATION_DISABLED_TOPICS = "jms.propagation.disabled.topics";
+  public static final String JMS_PROPAGATION_DISABLED_QUEUES = "jms.propagation.disabled.queues";
+
+  public static final String RABBIT_PROPAGATION_ENABLED = "rabbit.propagation.enabled";
+  public static final String RABBIT_PROPAGATION_DISABLED_QUEUES =
+      "rabbit.propagation.disabled.queues";
+  public static final String RABBIT_PROPAGATION_DISABLED_EXCHANGES =
+      "rabbit.propagation.disabled.exchanges";
+
   public static final String GRPC_IGNORED_OUTBOUND_METHODS = "trace.grpc.ignored.outbound.methods";
   public static final String GRPC_SERVER_TRIM_PACKAGE_RESOURCE =
       "trace.grpc.server.trim-package-resource";
@@ -60,6 +70,9 @@ public final class TraceInstrumentationConfig {
 
   public static final String SERVLET_PRINCIPAL_ENABLED = "trace.servlet.principal.enabled";
   public static final String SERVLET_ASYNC_TIMEOUT_ERROR = "trace.servlet.async-timeout.error";
+
+  public static final String SERVLET_ROOT_CONTEXT_SERVICE_NAME =
+      "trace.servlet.root-context.service.name";
 
   public static final String TEMP_JARS_CLEAN_ON_BOOT = "temp.jars.clean.on.boot";
 

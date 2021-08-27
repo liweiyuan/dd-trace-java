@@ -63,6 +63,16 @@ public class OpenJdkControllerTest {
   }
 
   @Test
+  public void testOldObjectSampleIsStillOverriddenThroughConfig() throws Exception {
+    when(config.isProfilingHeapEnabled()).thenReturn(true);
+    OpenJdkController controller = new OpenJdkController(config);
+    try (final Recording recording = controller.createRecording(TEST_NAME).stop().getRecording()) {
+      assertEquals(
+          Boolean.parseBoolean(recording.getSettings().get("jdk.OldObjectSample#enabled")), true);
+    }
+  }
+
+  @Test
   public void testObjectAllocationIsDisabledOnUnsupportedVersion() throws Exception {
     OpenJdkController controller = new OpenJdkController(config);
     try (final Recording recording = controller.createRecording(TEST_NAME).stop().getRecording()) {
@@ -95,6 +105,22 @@ public class OpenJdkControllerTest {
                 recording.getSettings().get("jdk.ObjectAllocationOutsideTLAB#enabled")),
             true);
       }
+    }
+  }
+
+  @Test
+  public void testObjectAllocationIsStillOverriddenThroughConfig() throws Exception {
+    when(config.isProfilingAllocationEnabled()).thenReturn(true);
+    OpenJdkController controller = new OpenJdkController(config);
+    try (final Recording recording = controller.createRecording(TEST_NAME).stop().getRecording()) {
+      assertEquals(
+          Boolean.parseBoolean(
+              recording.getSettings().get("jdk.ObjectAllocationInNewTLAB#enabled")),
+          true);
+      assertEquals(
+          Boolean.parseBoolean(
+              recording.getSettings().get("jdk.ObjectAllocationOutsideTLAB#enabled")),
+          true);
     }
   }
 

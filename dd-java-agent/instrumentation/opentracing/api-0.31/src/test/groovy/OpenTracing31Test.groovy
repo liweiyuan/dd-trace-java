@@ -48,7 +48,7 @@ class OpenTracing31Test extends AgentTestRunner {
 
     expect:
     result instanceof MutableSpan
-    (result as MutableSpan).localRootSpan == result.delegate
+    (result as MutableSpan).localRootSpan.delegate == result.delegate
     (result as MutableSpan).isError() == (exception != null)
     tracer.activeSpan() == null
     result.context().baggageItems().isEmpty()
@@ -286,6 +286,22 @@ class OpenTracing31Test extends AgentTestRunner {
     PrioritySampling.UNSET        | PrioritySampling.SAMPLER_KEEP
     PrioritySampling.USER_KEEP    | PrioritySampling.USER_KEEP
     PrioritySampling.USER_DROP    | PrioritySampling.USER_DROP
+  }
+
+  def "tolerate null span activation"() {
+    when:
+    try {
+      tracer.scopeManager().activate(null, false)?.close()
+    } catch (Exception ignored) {}
+
+    // make sure scope stack has been left in a valid state
+    Span testSpan = tracer.buildSpan("someOperation").start()
+    Scope testScope = tracer.scopeManager().activate(testSpan, false)
+    testSpan.finish()
+    testScope.close()
+
+    then:
+    assert tracer.scopeManager().active() == null
   }
 
   static class TextMapAdapter implements TextMap {

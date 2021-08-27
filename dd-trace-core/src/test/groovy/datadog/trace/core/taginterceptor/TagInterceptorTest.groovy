@@ -6,6 +6,7 @@ import datadog.trace.api.config.GeneralConfig
 import datadog.trace.api.env.CapturedEnvironment
 import datadog.trace.api.sampling.PrioritySampling
 import datadog.trace.bootstrap.instrumentation.api.AgentSpan
+import datadog.trace.bootstrap.instrumentation.api.InstrumentationTags
 import datadog.trace.bootstrap.instrumentation.api.Tags
 import datadog.trace.common.sampling.AllSampler
 import datadog.trace.common.writer.ListWriter
@@ -14,6 +15,7 @@ import datadog.trace.core.CoreSpan
 import datadog.trace.core.test.DDCoreSpecification
 
 import static datadog.trace.api.ConfigDefaults.DEFAULT_SERVICE_NAME
+import static datadog.trace.api.ConfigDefaults.DEFAULT_SERVLET_ROOT_CONTEXT_SERVICE_NAME
 import static datadog.trace.api.DDTags.ANALYTICS_SAMPLE_RATE
 import static datadog.trace.api.config.TracerConfig.SPLIT_BY_TAGS
 
@@ -98,15 +100,15 @@ class TagInterceptorTest extends DDCoreSpecification {
     tracer.close()
 
     where:
-    context         | serviceName          | expected
-    "/"             | DEFAULT_SERVICE_NAME | DEFAULT_SERVICE_NAME
-    ""              | DEFAULT_SERVICE_NAME | DEFAULT_SERVICE_NAME
-    "/some-context" | DEFAULT_SERVICE_NAME | "some-context"
-    "other-context" | DEFAULT_SERVICE_NAME | "other-context"
-    "/"             | "my-service"         | "my-service"
-    ""              | "my-service"         | "my-service"
-    "/some-context" | "my-service"         | "my-service"
-    "other-context" | "my-service"         | "my-service"
+    context         | serviceName                               | expected
+    "/"             | DEFAULT_SERVLET_ROOT_CONTEXT_SERVICE_NAME | DEFAULT_SERVLET_ROOT_CONTEXT_SERVICE_NAME
+    ""              | DEFAULT_SERVICE_NAME                      | DEFAULT_SERVICE_NAME
+    "/some-context" | DEFAULT_SERVICE_NAME                      | "some-context"
+    "other-context" | DEFAULT_SERVICE_NAME                      | "other-context"
+    "/"             | "my-service"                              | "my-service"
+    ""              | "my-service"                              | "my-service"
+    "/some-context" | "my-service"                              | "my-service"
+    "other-context" | "my-service"                              | "my-service"
   }
 
   def "setting service name as a property disables servlet.context with context '#context'"() {
@@ -175,6 +177,31 @@ class TagInterceptorTest extends DDCoreSpecification {
       .tagInterceptor(new TagInterceptor(true, "my-service",
       Collections.singleton(tag), new RuleFlags()))
       .build()
+  }
+
+  def "split-by-tags for servlet.context"() {
+    setup:
+    def tracer = createSplittingTracer(InstrumentationTags.SERVLET_CONTEXT)
+
+    when:
+    def span = tracer.buildSpan("some span")
+      .withTag(InstrumentationTags.SERVLET_CONTEXT, "some-context")
+      .start()
+    span.finish()
+
+    then:
+    span.serviceName == "some-context"
+
+    when:
+    span = tracer.buildSpan("some span").start()
+    span.setTag(InstrumentationTags.SERVLET_CONTEXT, "some-context")
+    span.finish()
+
+    then:
+    span.serviceName == "some-context"
+
+    cleanup:
+    tracer.close()
   }
 
   def "peer.service then split-by-tags via builder"() {

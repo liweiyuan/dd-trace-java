@@ -1,5 +1,7 @@
 import com.google.common.util.concurrent.MoreExecutors
 import datadog.trace.agent.test.AgentTestRunner
+import datadog.trace.agent.test.checkpoints.CheckpointValidator
+import datadog.trace.agent.test.checkpoints.CheckpointValidationMode
 import datadog.trace.api.DDSpanTypes
 import datadog.trace.bootstrap.instrumentation.api.Tags
 import example.GreeterGrpc
@@ -26,6 +28,9 @@ class GrpcStreamingTest extends AgentTestRunner {
 
   def "test conversation #name"() {
     setup:
+    CheckpointValidator.excludeValidations_DONOTUSE_I_REPEAT_DO_NOT_USE(
+      CheckpointValidationMode.INTERVALS)
+
     def msgCount = serverMessageCount
     def serverReceived = new CopyOnWriteArrayList<>()
     def clientReceived = new CopyOnWriteArrayList<>()
@@ -134,6 +139,8 @@ class GrpcStreamingTest extends AgentTestRunner {
             "$Tags.COMPONENT" "grpc-client"
             "$Tags.SPAN_KIND" Tags.SPAN_KIND_CLIENT
             "status.code" "OK"
+            "request.type" "example.Helloworld\$Response"
+            "response.type" "example.Helloworld\$Response"
             defaultTags()
           }
         }
